@@ -1,0 +1,4 @@
+id: 0
+event: message
+data: {"id":1,"jsonrpc":"2.0","result":{"capabilities":{"tools":{}},"protocolVersion":"2025-06-18","serverInfo":{"name":"Quantic Finance","version":"1.0.0"}}}
+

@@ -26,12 +26,12 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"net"
 	"net/http"
 	"slices"
 	"strings"
-	"syscall"
 	"time"
+
+	"github.com/fleveque/quantic-agent/internal/netx"
 )
 
 // DefaultBaseURL is where Ollama listens unless told otherwise.
@@ -235,7 +235,7 @@ func (c *Client) do(req *http.Request, out any) error {
 		}
 		// Two %w verbs wrap both errors: callers can ask errors.Is about our
 		// sentinel and about the network error underneath it.
-		if unreachable(err) {
+		if netx.Unreachable(err) {
 			return fmt.Errorf("llm: %s %s: %w: %w", req.Method, req.URL.Path, ErrUnavailable, err)
 		}
 		return fmt.Errorf("llm: %s %s: %w", req.Method, req.URL.Path, err)
@@ -255,34 +255,6 @@ func (c *Client) do(req *http.Request, out any) error {
 		return fmt.Errorf("llm: decoding %s reply: %w", req.URL.Path, err)
 	}
 	return nil
-}
-
-// unreachable reports whether a transport error means the server wasn't there
-// to answer. Three cases were reproduced: connection refused (nothing
-// listening), EOF (the connection closed before a reply, as a restart does)
-// and network unreachable (no route to the server's address). A reset
-// connection and an unreachable host are the same situation seen from
-// elsewhere. A DNS failure is left out on purpose: an unknown host is far more
-// often a typo in OLLAMA_HOST than a machine that's off, and a typo should fail
-// loudly rather than be waited on. A cancelled or expired context never gets
-// here: do reports it first, because a slow server is not a missing one.
-func unreachable(err error) bool {
-	// Checked first, so the rule is about the name failing to resolve and
-	// doesn't depend on what a *net.DNSError happens to wrap.
-	var dnsErr *net.DNSError
-	if errors.As(err, &dnsErr) {
-		return false
-	}
-	for _, cause := range []error{
-		syscall.ECONNREFUSED, syscall.ECONNRESET,
-		syscall.EHOSTUNREACH, syscall.ENETUNREACH,
-		io.EOF,
-	} {
-		if errors.Is(err, cause) {
-			return true
-		}
-	}
-	return false
 }
 
 // apiError describes a reply that wasn't 200 OK. Ollama reports most failures
