@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 	"testing"
 
@@ -193,5 +194,41 @@ func TestAskShowsRPCErrorsToTheModel(t *testing.T) {
 	}
 	if c := answer.Calls[0]; !c.Failed || !strings.Contains(c.Result, "Invalid params") {
 		t.Errorf("call = %+v, want the protocol error shown to the model", c)
+	}
+}
+
+func TestEveryCallIsRecordedAsItHappens(t *testing.T) {
+	model := &scriptedModel{script: []llm.Message{asks("get_weather", `{}`), asks("dividend_calendar", `{"days":10}`), says("done")}}
+	server := &fakeServer{results: map[string]mcp.Result{"dividend_calendar": {Text: calendar}}}
+	var recorded []string
+	r := newResearcher(model, server)
+	r.Record = func(ctx context.Context, seq int, c agent.Call) error {
+		recorded = append(recorded, fmt.Sprintf("%d:%s:%v", seq, c.Tool, c.Failed))
+		return nil
+	}
+
+	if _, err := r.Ask(t.Context(), "q"); err != nil {
+		t.Fatal(err)
+	}
+	// The refused call is recorded too: the audit log shows what was tried.
+	if want := []string{"0:get_weather:true", "1:dividend_calendar:false"}; !slices.Equal(recorded, want) {
+		t.Errorf("recorded %v, want %v", recorded, want)
+	}
+}
+
+func TestARunStopsIfACallCantBeRecorded(t *testing.T) {
+	model := &scriptedModel{script: []llm.Message{asks("dividend_calendar", `{}`), says("done")}}
+	server := &fakeServer{results: map[string]mcp.Result{"dividend_calendar": {Text: calendar}}}
+	r := newResearcher(model, server)
+	diskFull := errors.New("disk full")
+	r.Record = func(context.Context, int, agent.Call) error { return diskFull }
+
+	_, err := r.Ask(t.Context(), "q")
+
+	if !errors.Is(err, diskFull) {
+		t.Errorf("err = %v, want the recording failure", err)
+	}
+	if len(model.seen) != 1 {
+		t.Errorf("model asked %d times, want the run stopped after the unrecorded call", len(model.seen))
 	}
 }

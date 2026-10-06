@@ -3,7 +3,9 @@
 // It still has no scheduled tasks. What it can do so far: -check reports the
 // model server and its models, -ask sends one prompt and prints the reply,
 // and -research answers a question with Quantic's tools, printing each tool
-// call it made to stderr.
+// call it made to stderr. Every research run is stored, with its tool calls,
+// in a SQLite database: -runs lists them, -run N shows one and re-checks its
+// answer against the data it was given.
 //
 // Exit status: 0 success, 1 failure (including -timeout running out), 2 wrong
 // usage, 3 the model server wasn't there to answer, 4 a -research answer
@@ -29,8 +31,6 @@ import (
 	"github.com/fleveque/quantic-agent/internal/agent"
 	"github.com/fleveque/quantic-agent/internal/llm"
 	"github.com/fleveque/quantic-agent/internal/mcp"
-	"github.com/fleveque/quantic-agent/internal/provenance"
-	"github.com/fleveque/quantic-agent/internal/tools"
 )
 
 // version is replaced at build time with -ldflags once there are releases
@@ -84,8 +84,11 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	showVersion := fs.Bool("version", false, "print the version and exit")
 	check := fs.Bool("check", false, "report the model server's version and exit")
 	ask := fs.String("ask", "", "send one prompt to the model and print the reply")
-	research := fs.String("research", "", "answer a question using Quantic's tools")
+	question := fs.String("research", "", "answer a question using Quantic's tools")
 	mcpURL := fs.String("mcp", envOr("QUANTIC_MCP_URL", mcp.DefaultURL), "Quantic MCP server URL")
+	dbPath := fs.String("db", envOr("QUANTIC_AGENT_DB", defaultDBPath()), "the agent's database of runs and tool calls")
+	listRuns := fs.Bool("runs", false, "list recent runs")
+	runID := fs.Int64("run", 0, "show one run, and re-check its answer against the tool results it was given")
 	baseURL := fs.String("ollama", envOr("OLLAMA_HOST", llm.DefaultBaseURL), "model server base URL")
 	model := fs.String("model", envOr("QUANTIC_MODEL", defaultModel), "model to generate with")
 	timeout := fs.Duration("timeout", defaultTimeout, "give up on the model server after this long (0: no limit)")
@@ -155,56 +158,35 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 			resp.Model, resp.EvalCount, resp.EvalDuration.Round(time.Millisecond), truncationNote(resp))
 		return exitOK
 
-	case *research != "":
-		// The token, if any, comes only from the environment: a secret on
-		// the command line ends up in shell history and in ps.
-		server := mcp.New(*mcpURL, os.Getenv("QUANTIC_MCP_TOKEN"))
-		if _, err := server.Initialize(ctx); err != nil {
-			return fail(err)
-		}
-		r := &agent.Researcher{Model: client, Server: server, Tools: []tools.Tool{tools.DividendCalendar}}
-		answer, err := r.Ask(ctx, *research)
-		for _, c := range answer.Calls {
-			fmt.Fprintf(stderr, "tool %s %s → %s (%s)\n", c.Tool, c.Arguments, callSummary(c), c.Duration.Round(time.Millisecond))
-		}
+	case *question != "":
+		db, err := openStore(ctx, *dbPath)
 		if err != nil {
 			return fail(err)
 		}
-		fmt.Fprintln(stdout, answer.Text)
-		if answer.Truncated {
-			fmt.Fprintln(stderr, "agent: the answer was truncated: the model hit its token limit")
+		defer db.Close()
+		return research(ctx, stdout, stderr, researchConfig{
+			model: client, mcpURL: *mcpURL, store: db, question: *question, fail: fail,
+		})
+
+	case *listRuns:
+		db, err := openStore(ctx, *dbPath)
+		if err != nil {
+			return fail(err)
 		}
-		return verify(stderr, answer)
+		defer db.Close()
+		return showRuns(ctx, stdout, stderr, db)
+
+	case *runID != 0:
+		db, err := openStore(ctx, *dbPath)
+		if err != nil {
+			return fail(err)
+		}
+		defer db.Close()
+		return showRun(ctx, stdout, stderr, db, *runID)
 	}
 
 	fmt.Fprintln(stdout, "quantic-agent: no tasks defined yet")
 	return exitOK
-}
-
-// verify checks every figure in a research answer against the data its tool
-// calls returned (design N1). The answer has already been printed, so a person
-// can see it; the findings and the exit status say it can't be trusted.
-func verify(stderr io.Writer, answer agent.Answer) int {
-	var records []provenance.Record
-	for _, c := range answer.Calls {
-		if !c.Failed {
-			records = append(records, provenance.Record{Tool: c.Tool, Result: c.Result})
-		}
-	}
-	m, err := provenance.NewManifest(records...)
-	if err != nil {
-		fmt.Fprintln(stderr, "agent:", err)
-		return exitFailed
-	}
-	findings := provenance.CheckProse(answer.Text, m)
-	if len(findings) == 0 {
-		return exitOK
-	}
-	fmt.Fprintf(stderr, "agent: %d figure(s) in the answer came from no tool result:\n", len(findings))
-	for _, f := range findings {
-		fmt.Fprintf(stderr, "  %s\n", f)
-	}
-	return exitUnverified
 }
 
 // callSummary describes a tool call's outcome in a few words for the trace.
