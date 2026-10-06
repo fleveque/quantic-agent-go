@@ -1,14 +1,18 @@
 package llm_test
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"syscall"
 	"testing"
 	"time"
@@ -52,7 +56,7 @@ func TestGenerateDecodesReply(t *testing.T) {
 	srv := serveFixture(t, "generate.json", &sent)
 
 	c := llm.New(srv.URL, "quantic-9b:latest")
-	resp, err := c.Generate(llm.GenerateRequest{
+	resp, err := c.Generate(t.Context(), llm.GenerateRequest{
 		Prompt: "Reply with exactly: ok",
 		Think:  llm.Bool(false),
 	})
@@ -94,7 +98,7 @@ func TestGenerateDecodesReply(t *testing.T) {
 func TestGenerateReportsTruncation(t *testing.T) {
 	srv := serveFixture(t, "generate-thinking.json", nil)
 
-	resp, err := llm.New(srv.URL, "quantic-9b:latest").Generate(llm.GenerateRequest{Prompt: "hi"})
+	resp, err := llm.New(srv.URL, "quantic-9b:latest").Generate(t.Context(), llm.GenerateRequest{Prompt: "hi"})
 	if err != nil {
 		t.Fatalf("Generate: %v", err)
 	}
@@ -116,7 +120,7 @@ func TestGenerateOmitsUnsetOptions(t *testing.T) {
 	var sent map[string]any
 	srv := serveFixture(t, "generate.json", &sent)
 
-	_, err := llm.New(srv.URL, "m").Generate(llm.GenerateRequest{Prompt: "hi"})
+	_, err := llm.New(srv.URL, "m").Generate(t.Context(), llm.GenerateRequest{Prompt: "hi"})
 	if err != nil {
 		t.Fatalf("Generate: %v", err)
 	}
@@ -133,7 +137,7 @@ func TestGenerateSendsZeroValuedOptions(t *testing.T) {
 	var sent map[string]any
 	srv := serveFixture(t, "generate.json", &sent)
 
-	_, err := llm.New(srv.URL, "m").Generate(llm.GenerateRequest{
+	_, err := llm.New(srv.URL, "m").Generate(t.Context(), llm.GenerateRequest{
 		Prompt:  "hi",
 		Options: &llm.Options{Temperature: llm.Float64(0), Seed: llm.Int(0)},
 	})
@@ -166,7 +170,7 @@ func TestVersion(t *testing.T) {
 	}))
 	t.Cleanup(srv.Close)
 
-	got, err := llm.New(srv.URL, "m").Version()
+	got, err := llm.New(srv.URL, "m").Version(t.Context())
 	if err != nil {
 		t.Fatalf("Version: %v", err)
 	}
@@ -222,7 +226,7 @@ func TestServerErrors(t *testing.T) {
 			}))
 			t.Cleanup(srv.Close)
 
-			_, err := llm.New(srv.URL, "m").Generate(llm.GenerateRequest{Prompt: "hi"})
+			_, err := llm.New(srv.URL, "m").Generate(t.Context(), llm.GenerateRequest{Prompt: "hi"})
 			if err == nil {
 				t.Fatal("Generate returned no error, want one")
 			}
@@ -260,7 +264,7 @@ func TestServerErrors(t *testing.T) {
 const deadAddr = "http://127.0.0.1:1"
 
 func TestUnavailableWhenNothingListens(t *testing.T) {
-	_, err := llm.New(deadAddr, "m").Version()
+	_, err := llm.New(deadAddr, "m").Version(t.Context())
 
 	if !errors.Is(err, llm.ErrUnavailable) {
 		t.Fatalf("errors.Is(err, ErrUnavailable) = false for %q", err)
@@ -288,7 +292,7 @@ func TestUnavailableWhenConnectionDrops(t *testing.T) {
 	}))
 	t.Cleanup(srv.Close)
 
-	_, err := llm.New(srv.URL, "m").Generate(llm.GenerateRequest{Prompt: "hi"})
+	_, err := llm.New(srv.URL, "m").Generate(t.Context(), llm.GenerateRequest{Prompt: "hi"})
 
 	if !errors.Is(err, llm.ErrUnavailable) {
 		t.Errorf("errors.Is(err, ErrUnavailable) = false for %q", err)
@@ -298,7 +302,7 @@ func TestUnavailableWhenConnectionDrops(t *testing.T) {
 func TestUnknownHostIsNotUnavailable(t *testing.T) {
 	// .invalid is reserved and never resolves. An unresolvable name is almost
 	// always a typo in OLLAMA_HOST, which should fail rather than be waited on.
-	_, err := llm.New("http://no-such-host.invalid:11434", "m").Version()
+	_, err := llm.New("http://no-such-host.invalid:11434", "m").Version(t.Context())
 
 	if err == nil {
 		t.Fatal("Version returned no error, want one")
@@ -314,7 +318,7 @@ func TestGenerateRejectsUnparseableReply(t *testing.T) {
 	}))
 	t.Cleanup(srv.Close)
 
-	_, err := llm.New(srv.URL, "m").Generate(llm.GenerateRequest{Prompt: "hi"})
+	_, err := llm.New(srv.URL, "m").Generate(t.Context(), llm.GenerateRequest{Prompt: "hi"})
 	if err == nil {
 		t.Fatal("Generate returned no error, want one")
 	}
@@ -334,7 +338,7 @@ func TestNewAcceptsHostWithoutScheme(t *testing.T) {
 	// OLLAMA_HOST is conventionally "host:port" with no scheme.
 	hostPort := strings.TrimPrefix(srv.URL, "http://")
 
-	if _, err := llm.New(hostPort, "m").Generate(llm.GenerateRequest{Prompt: "hi"}); err != nil {
+	if _, err := llm.New(hostPort, "m").Generate(t.Context(), llm.GenerateRequest{Prompt: "hi"}); err != nil {
 		t.Fatalf("Generate against %q: %v", hostPort, err)
 	}
 }
@@ -348,7 +352,7 @@ func TestModels(t *testing.T) {
 	}))
 	t.Cleanup(srv.Close)
 
-	models, err := llm.New(srv.URL, "qwen3.5:9b").Models()
+	models, err := llm.New(srv.URL, "qwen3.5:9b").Models(t.Context())
 	if err != nil {
 		t.Fatalf("Models: %v", err)
 	}
@@ -395,7 +399,7 @@ func TestRunning(t *testing.T) {
 	}))
 	t.Cleanup(srv.Close)
 
-	running, err := llm.New(srv.URL, "qwen3.5:9b").Running()
+	running, err := llm.New(srv.URL, "qwen3.5:9b").Running(t.Context())
 	if err != nil {
 		t.Fatalf("Running: %v", err)
 	}
@@ -439,5 +443,105 @@ func TestOnGPUFraction(t *testing.T) {
 				t.Errorf("OnGPU() = %v, want %v", got, tt.want)
 			}
 		})
+	}
+}
+
+// blockingServer accepts a request and never answers it, the way a server
+// busy loading a large model looks from outside. The handler returns when the
+// client gives up, so it never outlives the test. started is closed when the
+// first request arrives.
+func blockingServer(t *testing.T) (srv *httptest.Server, started <-chan struct{}) {
+	t.Helper()
+	ch := make(chan struct{})
+	var once sync.Once
+	srv = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// Read the request first, as a real server does. Go's server only
+		// notices a client hanging up once the request body has been read;
+		// until then r.Context() is never cancelled and this would wait forever.
+		io.Copy(io.Discard, r.Body)
+		once.Do(func() { close(ch) })
+		<-r.Context().Done()
+	}))
+	t.Cleanup(srv.Close)
+	return srv, ch
+}
+
+func TestDeadlineExceeded(t *testing.T) {
+	srv, _ := blockingServer(t)
+	ctx, cancel := context.WithTimeout(t.Context(), 50*time.Millisecond)
+	defer cancel()
+
+	start := time.Now()
+	_, err := llm.New(srv.URL, "m").Generate(ctx, llm.GenerateRequest{Prompt: "hi"})
+
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("errors.Is(err, DeadlineExceeded) = false for %q", err)
+	}
+	// Slow is not gone: a timeout must never read as a stopped server.
+	if errors.Is(err, llm.ErrUnavailable) {
+		t.Errorf("errors.Is(err, ErrUnavailable) = true for a timeout")
+	}
+	if elapsed := time.Since(start); elapsed > 2*time.Second {
+		t.Errorf("Generate returned after %v, want it to stop at the 50ms deadline", elapsed)
+	}
+}
+
+func TestCancelledWhileWaiting(t *testing.T) {
+	srv, started := blockingServer(t)
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+
+	// Cancel from another goroutine once the server has the request, the way
+	// a signal handler cancels a run that is waiting on the model.
+	go func() {
+		<-started
+		cancel()
+	}()
+
+	_, err := llm.New(srv.URL, "m").Generate(ctx, llm.GenerateRequest{Prompt: "hi"})
+
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("errors.Is(err, Canceled) = false for %q", err)
+	}
+	if errors.Is(err, llm.ErrUnavailable) {
+		t.Errorf("errors.Is(err, ErrUnavailable) = true for a cancelled call")
+	}
+}
+
+func TestDeadlineWhileTheReplyIsArriving(t *testing.T) {
+	// Headers and half a body arrive, then nothing: the deadline ends the
+	// read of the body rather than the wait for a response.
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte(`{"model":"m","response":"half an ans`))
+		w.(http.Flusher).Flush()
+		<-r.Context().Done()
+	}))
+	t.Cleanup(srv.Close)
+	ctx, cancel := context.WithTimeout(t.Context(), 50*time.Millisecond)
+	defer cancel()
+
+	_, err := llm.New(srv.URL, "m").Generate(ctx, llm.GenerateRequest{Prompt: "hi"})
+
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Errorf("errors.Is(err, DeadlineExceeded) = false for %q", err)
+	}
+}
+
+func TestAlreadyCancelledContextSendsNothing(t *testing.T) {
+	var calls atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls.Add(1)
+	}))
+	t.Cleanup(srv.Close)
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+
+	_, err := llm.New(srv.URL, "m").Version(ctx)
+
+	if !errors.Is(err, context.Canceled) {
+		t.Errorf("errors.Is(err, Canceled) = false for %q", err)
+	}
+	if n := calls.Load(); n != 0 {
+		t.Errorf("server received %d requests, want none for a context cancelled beforehand", n)
 	}
 }

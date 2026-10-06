@@ -2,9 +2,11 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -46,7 +48,7 @@ func TestRunTable(t *testing.T) {
 	srv := benchServer(t, true)
 
 	var stdout, stderr bytes.Buffer
-	code := run([]string{"-ollama", srv.URL, "-models", "qwen3.5:9b", "-contexts", "4096", "-predict", "100"}, &stdout, &stderr)
+	code := run(t.Context(), []string{"-ollama", srv.URL, "-models", "qwen3.5:9b", "-contexts", "4096", "-predict", "100"}, &stdout, &stderr)
 
 	if code != 0 {
 		t.Fatalf("exit code = %d, want 0 (stderr: %q)", code, stderr.String())
@@ -63,7 +65,7 @@ func TestRunReportsCPUFallback(t *testing.T) {
 	srv := benchServer(t, false)
 
 	var stdout, stderr bytes.Buffer
-	code := run([]string{"-ollama", srv.URL, "-models", "qwen3.5:9b", "-contexts", "4096"}, &stdout, &stderr)
+	code := run(t.Context(), []string{"-ollama", srv.URL, "-models", "qwen3.5:9b", "-contexts", "4096"}, &stdout, &stderr)
 
 	if code != 0 {
 		t.Fatalf("exit code = %d, want 0 (stderr: %q)", code, stderr.String())
@@ -79,7 +81,7 @@ func TestRunJSON(t *testing.T) {
 	srv := benchServer(t, true)
 
 	var stdout, stderr bytes.Buffer
-	code := run([]string{"-ollama", srv.URL, "-models", "qwen3.5:9b", "-contexts", "4096", "-json"}, &stdout, &stderr)
+	code := run(t.Context(), []string{"-ollama", srv.URL, "-models", "qwen3.5:9b", "-contexts", "4096", "-json"}, &stdout, &stderr)
 
 	if code != 0 {
 		t.Fatalf("exit code = %d, want 0 (stderr: %q)", code, stderr.String())
@@ -111,7 +113,7 @@ func TestRunSkipsModelsThatArentPulled(t *testing.T) {
 	srv := benchServer(t, true)
 
 	var stdout, stderr bytes.Buffer
-	code := run([]string{"-ollama", srv.URL, "-models", "not-pulled:latest", "-contexts", "4096"}, &stdout, &stderr)
+	code := run(t.Context(), []string{"-ollama", srv.URL, "-models", "not-pulled:latest", "-contexts", "4096"}, &stdout, &stderr)
 
 	if code != 1 {
 		t.Errorf("exit code = %d, want 1", code)
@@ -165,7 +167,7 @@ func TestRunMatchesModelNamesCaseInsensitively(t *testing.T) {
 	srv := benchServer(t, true)
 
 	var stdout, stderr bytes.Buffer
-	code := run([]string{"-ollama", srv.URL, "-models", "QWEN3.5:9B", "-contexts", "4096", "-predict", "100"}, &stdout, &stderr)
+	code := run(t.Context(), []string{"-ollama", srv.URL, "-models", "QWEN3.5:9B", "-contexts", "4096", "-predict", "100"}, &stdout, &stderr)
 
 	if code != 0 {
 		t.Fatalf("exit code = %d, want 0 (stderr: %q)", code, stderr.String())
@@ -180,7 +182,7 @@ func TestRunFlagsAShortGenerationSample(t *testing.T) {
 	srv := benchServer(t, true) // the fake server always generates 100 tokens
 
 	var stdout, stderr bytes.Buffer
-	code := run([]string{"-ollama", srv.URL, "-models", "qwen3.5:9b", "-contexts", "4096", "-predict", "128"}, &stdout, &stderr)
+	code := run(t.Context(), []string{"-ollama", srv.URL, "-models", "qwen3.5:9b", "-contexts", "4096", "-predict", "128"}, &stdout, &stderr)
 
 	if code != 0 {
 		t.Fatalf("exit code = %d, want 0 (stderr: %q)", code, stderr.String())
@@ -236,7 +238,7 @@ func TestRunStopsWhenTheServerGoesAway(t *testing.T) {
 	t.Cleanup(srv.Close)
 
 	var stdout, stderr bytes.Buffer
-	code := run([]string{"-ollama", srv.URL, "-models", "first:latest,second:latest",
+	code := run(t.Context(), []string{"-ollama", srv.URL, "-models", "first:latest,second:latest",
 		"-contexts", "4096,8192", "-json"}, &stdout, &stderr)
 
 	if code != 0 {
@@ -262,5 +264,104 @@ func TestRunStopsWhenTheServerGoesAway(t *testing.T) {
 	}
 	if got := stderr.String(); !strings.Contains(got, "model server unavailable") {
 		t.Errorf("stderr = %q, want it to report the server as unavailable", got)
+	}
+}
+
+// twoModelServer serves two models. Generate requests are passed to answer,
+// which reports whether to reply normally; if not, the handler waits for the
+// client to hang up, as a busy server would. It records the model of every
+// generate request.
+func twoModelServer(t *testing.T, answer func(model string, n int) bool) (*httptest.Server, func() []string) {
+	t.Helper()
+	var (
+		mu    sync.Mutex
+		asked []string
+	)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/tags":
+			w.Write([]byte(`{"models":[{"name":"first:latest"},{"name":"second:latest"}]}`))
+		case "/api/ps":
+			w.Write([]byte(`{"models":[]}`))
+		case "/api/generate":
+			var body struct {
+				Model string `json:"model"`
+			}
+			json.NewDecoder(r.Body).Decode(&body) // also lets the server notice a hang-up
+
+			mu.Lock()
+			asked = append(asked, body.Model)
+			n := len(asked)
+			mu.Unlock()
+
+			if !answer(body.Model, n) {
+				<-r.Context().Done()
+				return
+			}
+			w.Write([]byte(`{"response":"done","done":true,"prompt_eval_count":10,` +
+				`"prompt_eval_duration":1000000,"eval_count":10,"eval_duration":1000000}`))
+		}
+	}))
+	t.Cleanup(srv.Close)
+	return srv, func() []string {
+		mu.Lock()
+		defer mu.Unlock()
+		return slices.Clone(asked)
+	}
+}
+
+// Ctrl-C mid-run: report what was measured, exit 130, start nothing new.
+func TestRunStopsWhenInterrupted(t *testing.T) {
+	ctx, cancel := context.WithCancel(t.Context())
+	srv, asked := twoModelServer(t, func(model string, n int) bool {
+		if n >= 3 { // warm-up and the first measurement succeed
+			cancel() // what Ctrl-C does to the context main hands to run
+			return false
+		}
+		return true
+	})
+
+	var stdout, stderr bytes.Buffer
+	code := run(ctx, []string{"-ollama", srv.URL, "-models", "first:latest,second:latest",
+		"-contexts", "4096,8192", "-json"}, &stdout, &stderr)
+
+	if code != 130 {
+		t.Errorf("exit code = %d, want 130", code)
+	}
+	var results []result
+	if err := json.Unmarshal(stdout.Bytes(), &results); err != nil {
+		t.Fatalf("decoding output: %v\n%s", err, stdout.String())
+	}
+	if len(results) != 1 {
+		t.Errorf("got %d results, want the 1 measured before the interrupt", len(results))
+	}
+	if slices.Contains(asked(), "second:latest") {
+		t.Errorf("the second model was requested after the interrupt (requests: %v)", asked())
+	}
+}
+
+// One request running out of time is that request's problem, not the run's:
+// the next model is still measured.
+func TestRunMovesOnAfterATimeout(t *testing.T) {
+	srv, _ := twoModelServer(t, func(model string, n int) bool {
+		return model != "first:latest" // the first model never answers
+	})
+
+	var stdout, stderr bytes.Buffer
+	code := run(t.Context(), []string{"-ollama", srv.URL, "-models", "first:latest,second:latest",
+		"-contexts", "4096", "-timeout", "50ms", "-json"}, &stdout, &stderr)
+
+	if code != 0 {
+		t.Fatalf("exit code = %d, want 0 (stderr: %q)", code, stderr.String())
+	}
+	var results []result
+	if err := json.Unmarshal(stdout.Bytes(), &results); err != nil {
+		t.Fatalf("decoding output: %v\n%s", err, stdout.String())
+	}
+	if len(results) != 1 || results[0].Model != "second:latest" {
+		t.Errorf("results = %+v, want one measurement of second:latest", results)
+	}
+	if got := stderr.String(); !strings.Contains(got, "context deadline exceeded") {
+		t.Errorf("stderr = %q, want the first model's timeout reported", got)
 	}
 }

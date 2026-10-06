@@ -13,6 +13,7 @@ where I found it non-obvious.
 | [01](01-a-binary-a-package-and-go-test.md) | A binary, a package, and `go test` | 1 — first code | [A binary, a package, and `go test`](https://claude.ai/artifact/PuuxbeGuttxWhboXDxbZMi) | — |
 | [02](02-structs-tags-and-one-http-call.md) | Structs, tags, and one HTTP call | 2 — the model client | [Structs, tags, and one HTTP call](https://claude.ai/artifact/4QGaudzoGjNAPto7ZcxgpD) | [The Ollama client, line by line](https://claude.ai/artifact/F87xnvzrSKtwqnwsNS6ipT) |
 | [03](03-errors-you-can-ask-questions-of.md) | Errors you can ask questions of | 3 — errors across the LLM boundary | [Errors you can ask questions of](https://claude.ai/artifact/CCH115UXhRfsN5N16eXRHf) | [Errors, line by line](https://claude.ai/artifact/6HdVkT2Z8FGZoyxMnyaJ5i) |
+| [04](04-deadlines-and-letting-go.md) | Deadlines, and letting go cleanly | 4 — timeouts and cancellation | [Deadlines, and letting go cleanly](https://claude.ai/artifact/LCHhkZQtTehnjSNXRyVWJv) | [Deadlines, line by line](https://claude.ai/artifact/LvtwYVQmph38YeYdrjSRte) |
 | [10](10-vector-search-without-a-vector-db.md) | Vector search without a vector database | 10 — retrieval | [Vector search without a vector database](https://claude.ai/code/artifact/4cf71989-6588-4864-b3bc-314781a156b1) | — |
 
 Lessons tell the story of a milestone: what surprised me and why. Walkthroughs go through the code

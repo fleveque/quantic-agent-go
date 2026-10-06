@@ -239,4 +239,4 @@ it a thousand times before deciding what.
 ---
 
 **Previous:** [Lesson 02 — Structs, tags, and one HTTP call](02-structs-tags-and-one-http-call.md) ·
-**Next:** Lesson 04 — timeouts and cancellation *(not written yet)*
+**Next:** [Lesson 04 — Deadlines, and letting go cleanly](04-deadlines-and-letting-go.md)

@@ -151,9 +151,11 @@ ollama` keeps it off until you `enable --now` it again.
 The agent is a one-shot command for now, so there is nothing to stop. Once it runs as a service
 (milestone 13) it gets its own unit, and the design requires that stopping it loses no work and that a
 stopped Ollama makes it wait rather than fail ([design §3.6](design.md#36-concurrency-model)).
-The first half of that already exists: with Ollama stopped, `agent` exits with status 3
-("no model server answering"), which means nothing was attempted and the same command can be rerun
-later.
+Parts of that already exist. With Ollama stopped, `agent` exits with status 3 ("no model server
+answering"), which means nothing was attempted and the same command can be rerun later. Ctrl-C or
+`SIGTERM` cancels the request in flight and exits with 130; Ollama stops working on a cancelled
+generation within about a second, so stopping the agent is enough to free the GPU. Cancelling while a
+model is still *loading* aborts the load, so the next request starts it again from zero.
 
 ---
 
@@ -179,6 +181,7 @@ this on a trusted LAN, ideally with a firewall rule limiting port 11434 to the l
 | `X is not on this server` | Model not pulled | `ollama list`, then `ollama pull X` |
 | `no model server answering at …`, exit status 3 | Ollama stopped, restarting, or on another host that's off | `systemctl status ollama`; start it (section 8). Nothing was attempted, so rerunning is safe |
 | `the model server failed; its log has the cause` | Ollama answered 5xx, e.g. a model it couldn't load | `journalctl -u ollama -e` |
+| `gave up after 5m0s (-timeout)` | The request took longer than `-timeout`: a slow model at a long context, or a stuck server | Raise `-timeout`, or check `ollama ps` for a model that spilled into system RAM. Too short a timeout during a cold load aborts the load |
 | `ON GPU 0% (CPU)` on the desktop | Ollama not using the GPU | `nvidia-smi`; `journalctl -u ollama -b \| grep -iE 'cuda\|gpu'` |
 | 64K row much slower than 32K, `ON GPU` below 100% | Cache no longer fits beside the weights | Expected at the limit — that's the measurement. Try section 6. |
 | `go test -race` fails on cgo | No C compiler | Install `gcc`, or drop `-race` locally |
