@@ -273,10 +273,16 @@ lack: down migrations, a CLI, and **locking across processes**. Two processes op
 at the same moment can collide: in a test of 20 simultaneous pairs, 2 of the 40 opens failed with
 `database is locked (SQLITE_BUSY)` while creating `schema_migrations`. Nothing is lost, and the next
 start succeeds, but that process exits with an error. Milestone 9's worker pool is one process, so it's
-unaffected. **Switch to goose when any of these becomes true:** more than one process can start against
-the database at once (for example a systemd timer firing while the daemon runs), a migration needs
-rolling back, or the store moves to PostgreSQL. Goose reads SQL migrations from an `embed.FS`, so the
-existing files carry over.
+unaffected.
+
+**Decision: switch to goose at the start of milestone 8**, before the second migration is written. Down
+migrations are the main reason: they matter most while a schema is still changing, when a new
+migration turns out wrong and needs undoing and redoing, and milestone 8 brings the first schema change
+(run phases and checkpoints). Goose also brings cross-process locking and a CLI. It reads SQL
+migrations from an `embed.FS`, so `0001` carries over, gaining the `-- +goose Up` / `-- +goose Down`
+markers. The other triggers still stand if the switch is ever reconsidered: more than one process
+starting against the database at once (a systemd timer firing while the daemon runs), or a move to
+PostgreSQL.
 
 ### 3.8 Delivery
 
