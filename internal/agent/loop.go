@@ -89,7 +89,7 @@ type Researcher struct {
 // failure the model can't fix, such as the tool server being down or the
 // context ending, stops the loop and is returned with the calls made so far.
 func (r *Researcher) Ask(ctx context.Context, question string) (Answer, error) {
-	defs, err := r.toolDefs()
+	req, err := r.FirstRequest(question)
 	if err != nil {
 		return Answer{}, err
 	}
@@ -97,15 +97,11 @@ func (r *Researcher) Ask(ctx context.Context, question string) (Answer, error) {
 	if limit == 0 {
 		limit = DefaultMaxCalls
 	}
-
-	history := []llm.Message{
-		{Role: "system", Content: systemPrompt},
-		{Role: "user", Content: question},
-	}
+	history := req.Messages
 	var answer Answer
 
 	for {
-		resp, err := r.Model.Chat(ctx, llm.ChatRequest{Messages: history, Tools: defs, Think: llm.Bool(false)})
+		resp, err := r.Model.Chat(ctx, llm.ChatRequest{Messages: history, Tools: req.Tools, Think: req.Think})
 		if err != nil {
 			return answer, err
 		}
@@ -130,6 +126,24 @@ func (r *Researcher) Ask(ctx context.Context, question string) (Answer, error) {
 			history = append(history, llm.Message{Role: "tool", ToolName: call.Tool, Content: call.Result})
 		}
 	}
+}
+
+// FirstRequest is the request that opens the loop for a question: the
+// standing instructions, the question, and the allowlisted tools. It is
+// exported so an evaluation can show a model exactly what the loop shows it.
+func (r *Researcher) FirstRequest(question string) (llm.ChatRequest, error) {
+	defs, err := r.toolDefs()
+	if err != nil {
+		return llm.ChatRequest{}, err
+	}
+	return llm.ChatRequest{
+		Messages: []llm.Message{
+			{Role: "system", Content: systemPrompt},
+			{Role: "user", Content: question},
+		},
+		Tools: defs,
+		Think: llm.Bool(false),
+	}, nil
 }
 
 // run executes one tool call. The error it returns is only for failures the

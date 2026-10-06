@@ -67,6 +67,21 @@ resource for MoE models and close to useless for dense ones.
    try if a candidate wins on quality but needs more context than fits
    ([runbook §6](../target-machine.md#6-does-kv-cache-quantisation-engage)).
 
+## Update, 2026-10-06: the first quality numbers
+
+Milestone 5 left behind `cmd/evaltools`: eight questions whose right first move is known, five runs
+each. Every model made 40 well-formed calls out of 40 to a real tool, declined to call one for the two
+questions that needed none, and chose the right window every time but one: asked about "the next six
+months", all three often requested 180 days though the tool covers at most 120. Applying that limit
+strictly, the 9B scored 37/40 and 36/40 over two runs, the 35B MoE 34/40 and 32/40, the 27B 38/40
+and 37/40 ([benchmarks](../benchmarks/README.md)).
+
+At five runs per case those differences are noise; nothing here overturns the decision. The useful
+findings are about the agent rather than the models: a limit stated in the tool's description or
+schema is ignored about as often either way, so the agent enforces it in code and tells the model,
+which then retries correctly. The answer can still overstate what the data covers, which is what the
+provenance validator (milestone 6) is for.
+
 ## Consequences
 
 - Milestone 8's budgets (design §3.2) start from the 9B's numbers: about 4,400–5,000 prompt tokens and

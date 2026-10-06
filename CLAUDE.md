@@ -18,13 +18,17 @@ learning record. Start with [README.md](README.md) and [docs/design.md](docs/des
 - Milestone 4 (timeouts and cancellation): every `llm` method takes a `context.Context`; `-timeout`
   on both commands; Ctrl-C/`SIGTERM` cancel the request in flight (exit 130). Lesson 04 and
   walkthrough 04.
+- Milestone 5 (first real tool): `agent -research` runs model → Quantic MCP → model end to end.
+  `internal/mcp` (Streamable HTTP, anonymous; [ADR 0006](docs/decisions/0006-anonymous-mcp-for-public-tools.md)),
+  `internal/tools` (schemas and bounds from structs), `internal/agent` (the loop's seed),
+  `cmd/evaltools` (tool-call evaluation; results in `docs/benchmarks/`).
 
 ## Next, in order
 
-1. **Milestone 5 — first real tool, `dividend_calendar`, end to end**: schema from Go structs by
-   reflection, and MCP auth, which is design open question 1 and still unanswered. Start there.
-2. Milestone 5 must leave behind an evaluation set that runs against any model name (ADR 0005), the
-   basis of the model-upkeep task (design §1, open question 10).
+1. **Milestone 6 — the provenance validator**: every figure in a draft traces to a recorded tool
+   call (design §3.3, N1). `agent.Answer.Calls` is the record it validates against.
+2. Week Ahead data needs `get_stock` per company (amounts, yields) and pacing under the anonymous
+   rate limit of 60 requests/minute (ADR 0006).
 
 ## Conventions
 
@@ -56,6 +60,17 @@ learning record. Start with [README.md](README.md) and [docs/design.md](docs/des
 - The design's non-negotiables (design §2) — no invented numbers, no autonomous publishing — are not
   up for convenience trade-offs.
 
+## Quantic MCP, learned the hard way
+
+- `https://quantic.finance/mcp`, Streamable HTTP. Replies are SSE when the client accepts it, JSON
+  otherwise; clients must accept both. `initialize` returns `Mcp-Session-Id`.
+- No `Authorization` header = anonymous: public reference tools answer (60 req/min/IP), portfolio
+  tools return `isError: true`. A bad token is `401`, never a fallback to anonymous.
+- A tool's output is a JSON document *inside* `content[0].text`: decode twice.
+- Tool refusals are results (`isError`); protocol mistakes are JSON-RPC errors (`-32602`).
+- The server's code is in `../quantic` on `main` (`lib/quantic_web/mcp/`). Fetch first: the local
+  checkout lagged `origin/main` by three months.
+
 ## Ollama, learned the hard way
 
 - `stream` must be sent as `false` explicitly; the server streams by default.
@@ -65,5 +80,8 @@ learning record. Start with [README.md](README.md) and [docs/design.md](docs/des
 - Model names resolve case-insensitively; compare with `strings.EqualFold`.
 - `hf.co/{user}/{repo}:{QUANT}` pulls any Hub GGUF. Per-model version floors are undocumented.
 - Error bodies are `{"error": ...}` JSON, except a bad path, which is plain text.
+- `/api/chat` takes `tools`; a reply asking for one has empty `content` and `tool_calls` whose
+  `arguments` is a JSON object (not a string). Send the tool result back as `role: "tool"` with
+  `tool_name`.
 - Cancelling a request mid-generation stops the GPU work within about a second; cancelling while a
   model is loading aborts the load. Deadlines must allow for a cold start (up to ~31s measured).

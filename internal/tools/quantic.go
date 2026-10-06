@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"reflect"
+	"strings"
 )
 
 // Tool is a tool the research loop may offer the model: a name the model
@@ -35,12 +36,48 @@ func (t Tool) DecodeArgs(raw json.RawMessage) (any, error) {
 			return nil, fmt.Errorf("tools: %s arguments: %w", t.Name, err)
 		}
 	}
+	if err := checkBounds(v.Elem()); err != nil {
+		return nil, fmt.Errorf("tools: %s arguments: %w", t.Name, err)
+	}
 	return v.Elem().Interface(), nil
+}
+
+// checkBounds enforces the `min` and `max` tags of a decoded argument
+// struct. The schema already tells the model the limits; this is what makes
+// them true. A limit stated only in prose is one a model can ignore, and the
+// evaluation showed that it does.
+func checkBounds(v reflect.Value) error {
+	t := v.Type()
+	for i := range t.NumField() {
+		field := t.Field(i)
+		if !field.IsExported() {
+			continue
+		}
+		var x float64
+		switch f := v.Field(i); {
+		case f.CanInt():
+			x = float64(f.Int())
+		case f.CanUint():
+			x = float64(f.Uint())
+		case f.CanFloat():
+			x = f.Float()
+		default:
+			continue // not a number, so no bounds to check
+		}
+		name, _, _ := strings.Cut(field.Tag.Get("json"), ",")
+		if lo, err := bound(field, "min"); err == nil && lo != nil && x < *lo {
+			return fmt.Errorf("%s is %v; it must be at least %v", name, x, *lo)
+		}
+		if hi, err := bound(field, "max"); err == nil && hi != nil && x > *hi {
+			return fmt.Errorf("%s is %v; it can be at most %v", name, x, *hi)
+		}
+	}
+	return nil
 }
 
 // DividendCalendarArgs are dividend_calendar's arguments.
 type DividendCalendarArgs struct {
-	Days int `json:"days,omitempty" desc:"How many days ahead to look, counting from today. Defaults to 45; at most 120."`
+	Days int `json:"days,omitempty" max:"120" desc:"How many days ahead to look, counting from today. Defaults to 45; at most 120."`
 }
 
 // DividendCalendar lists upcoming ex-dividend dates. It is one of Quantic's

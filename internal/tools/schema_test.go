@@ -123,6 +123,8 @@ func TestDecodeArgs(t *testing.T) {
 		{`{"days":"ten"}`, nil, "cannot unmarshal string"},
 		{`{"days":10,"sector":"Utilities"}`, nil, `unknown field "sector"`},
 		{`{"days":2.5}`, nil, "cannot unmarshal number 2.5"},
+		{`{"days":120}`, tools.DividendCalendarArgs{Days: 120}, ""},
+		{`{"days":180}`, nil, "days is 180; it can be at most 120"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.raw, func(t *testing.T) {
@@ -140,5 +142,37 @@ func TestDecodeArgs(t *testing.T) {
 				t.Errorf("got %#v, want %#v", got, tt.want)
 			}
 		})
+	}
+}
+
+func TestBoundsReachTheSchema(t *testing.T) {
+	type args struct {
+		Days  int     `json:"days" min:"1" max:"120"`
+		Ratio float64 `json:"ratio" min:"0"`
+	}
+	s, err := tools.SchemaOf(args{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	days, ratio := s.Properties["days"], s.Properties["ratio"]
+	if days.Minimum == nil || *days.Minimum != 1 || days.Maximum == nil || *days.Maximum != 120 {
+		t.Errorf("days bounds = %v, %v; want 1 and 120", days.Minimum, days.Maximum)
+	}
+	// A minimum of 0 is a real bound: it must be in the schema, not dropped.
+	if ratio.Minimum == nil || *ratio.Minimum != 0 || ratio.Maximum != nil {
+		t.Errorf("ratio bounds = %v, %v; want 0 and none", ratio.Minimum, ratio.Maximum)
+	}
+	out, _ := json.Marshal(s)
+	if !strings.Contains(string(out), `"minimum":0`) {
+		t.Errorf("schema JSON %s lost the zero minimum", out)
+	}
+}
+
+func TestBoundsOnlyOnNumbers(t *testing.T) {
+	type args struct {
+		Symbol string `json:"symbol" max:"5"`
+	}
+	if _, err := tools.SchemaOf(args{}); err == nil || !strings.Contains(err.Error(), "needs a number") {
+		t.Errorf("err = %v, want a max tag on a string refused", err)
 	}
 }

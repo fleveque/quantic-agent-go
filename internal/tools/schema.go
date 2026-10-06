@@ -3,6 +3,7 @@ package tools
 import (
 	"fmt"
 	"reflect"
+	"strconv"
 	"strings"
 )
 
@@ -14,6 +15,11 @@ type Schema struct {
 	Properties  map[string]*Schema `json:"properties,omitempty"`
 	Required    []string           `json:"required,omitempty"`
 	Items       *Schema            `json:"items,omitempty"`
+
+	// Bounds on a number, from `min` and `max` tags. Pointers, because 0 is
+	// a real bound and must stay distinguishable from no bound at all.
+	Minimum *float64 `json:"minimum,omitempty"`
+	Maximum *float64 `json:"maximum,omitempty"`
 }
 
 // SchemaOf derives the JSON Schema of a tool's argument struct from the
@@ -25,7 +31,9 @@ type Schema struct {
 //   - the property name is the field's json tag, or the field name without one;
 //     a json tag of "-" leaves the field out;
 //   - a field is required unless its json tag says omitempty, or it's a pointer;
-//   - a `desc` tag becomes the property's description.
+//   - a `desc` tag becomes the property's description;
+//   - `min` and `max` tags on a number become its minimum and maximum, which
+//     Tool.DecodeArgs also enforces.
 //
 // Fields of a type JSON Schema has no word for (maps, channels, funcs) are an
 // error rather than something silently guessed.
@@ -82,6 +90,12 @@ func objectSchema(t reflect.Type) (*Schema, error) {
 			return nil, fmt.Errorf("tools: field %s: %w", field.Name, err)
 		}
 		prop.Description = field.Tag.Get("desc")
+		if prop.Minimum, err = bound(field, "min"); err != nil {
+			return nil, err
+		}
+		if prop.Maximum, err = bound(field, "max"); err != nil {
+			return nil, err
+		}
 		s.Properties[name] = prop
 
 		optional := field.Type.Kind() == reflect.Pointer || strings.Contains(opts, "omitempty")
@@ -90,4 +104,20 @@ func objectSchema(t reflect.Type) (*Schema, error) {
 		}
 	}
 	return s, nil
+}
+
+// bound reads a `min` or `max` tag. Only numbers can have one.
+func bound(field reflect.StructField, tag string) (*float64, error) {
+	raw, ok := field.Tag.Lookup(tag)
+	if !ok {
+		return nil, nil
+	}
+	if k := field.Type.Kind(); k == reflect.String || k == reflect.Bool || k == reflect.Struct || k == reflect.Slice {
+		return nil, fmt.Errorf("tools: field %s: a %s tag needs a number, not %s", field.Name, tag, field.Type)
+	}
+	v, err := strconv.ParseFloat(raw, 64)
+	if err != nil {
+		return nil, fmt.Errorf("tools: field %s: %s tag %q is not a number", field.Name, tag, raw)
+	}
+	return &v, nil
 }

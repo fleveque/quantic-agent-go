@@ -323,7 +323,10 @@ refused Qwen3.5 outright with a `412: requires a newer version of Ollama`.
 1. **MCP authentication from a headless daemon.** Quantic's MCP server uses OAuth, which assumes an
    interactive consent flow. A local daemon needs a non-interactive credential: a long-lived service
    token scoped to read-only tools, a direct internal API path, or a one-time grant with a stored
-   refresh token. *First blocker — needed by milestone 5.*
+   refresh token. *Answered 2026-10-06* — [decision 0006](decisions/0006-anonymous-mcp-for-public-tools.md):
+   the server already answers anonymous callers for its public reference tools and refuses them its
+   portfolio tools, so the agent connects anonymously. A service token, with no user behind it, is
+   the plan for when an authenticated reference tool is needed.
 2. **The `/insights` section doesn't exist yet.** It's Phoenix work in the private repo: route,
    layout, markdown rendering, per-locale routing consistent with the existing language subdomains,
    sitemap and hreflang, plus the free-registration gate and its `schema.org` flexible-sampling
