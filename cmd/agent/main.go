@@ -1,8 +1,9 @@
 // Command agent is the quantic-agent daemon.
 //
-// It still has no scheduled tasks. What it can do so far is reach the local
-// model server: -check reports the server version and its models, -ask sends
-// one prompt and prints the reply.
+// It still has no scheduled tasks. What it can do so far: -check reports the
+// model server and its models, -ask sends one prompt and prints the reply,
+// and -research answers a question with Quantic's tools, printing each tool
+// call it made to stderr.
 //
 // Exit status: 0 success, 1 failure (including -timeout running out), 2 wrong
 // usage, 3 the model server wasn't there to answer, 130 stopped by Ctrl-C or
@@ -24,7 +25,10 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/fleveque/quantic-agent/internal/agent"
 	"github.com/fleveque/quantic-agent/internal/llm"
+	"github.com/fleveque/quantic-agent/internal/mcp"
+	"github.com/fleveque/quantic-agent/internal/tools"
 )
 
 // version is replaced at build time with -ldflags once there are releases
@@ -77,6 +81,8 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	showVersion := fs.Bool("version", false, "print the version and exit")
 	check := fs.Bool("check", false, "report the model server's version and exit")
 	ask := fs.String("ask", "", "send one prompt to the model and print the reply")
+	research := fs.String("research", "", "answer a question using Quantic's tools")
+	mcpURL := fs.String("mcp", envOr("QUANTIC_MCP_URL", mcp.DefaultURL), "Quantic MCP server URL")
 	baseURL := fs.String("ollama", envOr("OLLAMA_HOST", llm.DefaultBaseURL), "model server base URL")
 	model := fs.String("model", envOr("QUANTIC_MODEL", defaultModel), "model to generate with")
 	timeout := fs.Duration("timeout", defaultTimeout, "give up on the model server after this long (0: no limit)")
@@ -101,7 +107,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 		defer cancel()
 	}
 	client := llm.New(*baseURL, *model)
-	fail := func(err error) int { return report(stderr, err, *baseURL, client.Model(), *timeout) }
+	fail := func(err error) int { return report(stderr, err, *baseURL, *mcpURL, client.Model(), *timeout) }
 
 	switch {
 	case *check:
@@ -145,16 +151,45 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintf(stderr, "%s · %d tokens · %s%s\n",
 			resp.Model, resp.EvalCount, resp.EvalDuration.Round(time.Millisecond), truncationNote(resp))
 		return exitOK
+
+	case *research != "":
+		// The token, if any, comes only from the environment: a secret on
+		// the command line ends up in shell history and in ps.
+		server := mcp.New(*mcpURL, os.Getenv("QUANTIC_MCP_TOKEN"))
+		if _, err := server.Initialize(ctx); err != nil {
+			return fail(err)
+		}
+		r := &agent.Researcher{Model: client, Server: server, Tools: []tools.Tool{tools.DividendCalendar}}
+		answer, err := r.Ask(ctx, *research)
+		for _, c := range answer.Calls {
+			fmt.Fprintf(stderr, "tool %s %s → %s (%s)\n", c.Tool, c.Arguments, callSummary(c), c.Duration.Round(time.Millisecond))
+		}
+		if err != nil {
+			return fail(err)
+		}
+		fmt.Fprintln(stdout, answer.Text)
+		if answer.Truncated {
+			fmt.Fprintln(stderr, "agent: the answer was truncated: the model hit its token limit")
+		}
+		return exitOK
 	}
 
 	fmt.Fprintln(stdout, "quantic-agent: no tasks defined yet")
 	return exitOK
 }
 
+// callSummary describes a tool call's outcome in a few words for the trace.
+func callSummary(c agent.Call) string {
+	if c.Failed {
+		return c.Result
+	}
+	return fmt.Sprintf("%d bytes", len(c.Result))
+}
+
 // report describes err and chooses the exit code. It decides by the kind of
 // error, which the llm package exposes as values, never by matching the
 // message text: messages are for people and can change.
-func report(stderr io.Writer, err error, baseURL, model string, timeout time.Duration) int {
+func report(stderr io.Writer, err error, baseURL, mcpURL, model string, timeout time.Duration) int {
 	switch {
 	case errors.Is(err, context.Canceled):
 		fmt.Fprintln(stderr, "agent: stopped; the request in flight was cancelled")
@@ -162,6 +197,19 @@ func report(stderr io.Writer, err error, baseURL, model string, timeout time.Dur
 
 	case errors.Is(err, context.DeadlineExceeded):
 		fmt.Fprintf(stderr, "agent: gave up after %s (-timeout). A cold model can take half a minute to load, and a long generation longer.\n", timeout)
+		return exitFailed
+
+	case errors.Is(err, mcp.ErrUnavailable):
+		fmt.Fprintf(stderr, "agent: no MCP server answering at %s.\n", mcpURL)
+		fmt.Fprintln(stderr, "agent:", err)
+		return exitUnavailable
+
+	case errors.Is(err, mcp.ErrUnauthorized):
+		fmt.Fprintln(stderr, "agent: the MCP server rejected QUANTIC_MCP_TOKEN. Unset it to connect anonymously, or create a new token.")
+		return exitFailed
+
+	case errors.Is(err, agent.ErrTooManyCalls):
+		fmt.Fprintln(stderr, "agent: the model kept asking for tools and never answered:", err)
 		return exitFailed
 
 	case errors.Is(err, llm.ErrUnavailable):

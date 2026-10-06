@@ -1,0 +1,50 @@
+[
+  {
+    "name": "explicit window",
+    "question": "Which companies go ex-dividend in the next 10 days?",
+    "want_tool": "dividend_calendar",
+    "days_min": 10,
+    "days_max": 10
+  },
+  {
+    "name": "this week",
+    "question": "What goes ex-dividend this week?",
+    "want_tool": "dividend_calendar",
+    "days_min": 5,
+    "days_max": 7
+  },
+  {
+    "name": "two months",
+    "question": "List the ex-dividend dates coming up over the next two months.",
+    "want_tool": "dividend_calendar",
+    "days_min": 56,
+    "days_max": 62
+  },
+  {
+    "name": "beyond the maximum",
+    "question": "Which stocks go ex-dividend in the next six months?",
+    "want_tool": "dividend_calendar",
+    "days_min": 120,
+    "days_max": 120
+  },
+  {
+    "name": "no window given",
+    "question": "Show me the upcoming ex-dividend dates.",
+    "want_tool": "dividend_calendar"
+  },
+  {
+    "name": "one company",
+    "question": "When does Apple next go ex-dividend?",
+    "want_tool": "dividend_calendar"
+  },
+  {
+    "name": "definition, no tool",
+    "question": "What does ex-dividend date mean?",
+    "want_tool": ""
+  },
+  {
+    "name": "arithmetic, no tool",
+    "question": "What is 17 times 23?",
+    "want_tool": ""
+  }
+]

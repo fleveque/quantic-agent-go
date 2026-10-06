@@ -1,0 +1,1 @@
+{"error":{"code":-32602,"data":{"message":"days: expected type of :integer received \"ten\" value"},"message":"Invalid params"},"id":6,"jsonrpc":"2.0"}

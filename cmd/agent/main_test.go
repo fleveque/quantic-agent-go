@@ -3,10 +3,15 @@ package main
 import (
 	"bytes"
 	"context"
+	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -263,5 +268,82 @@ func TestRunStopsWhenInterrupted(t *testing.T) {
 	}
 	if got := stderr.String(); !strings.Contains(got, "stopped") {
 		t.Errorf("stderr = %q, want it to say the run was stopped", got)
+	}
+}
+
+// fakeMCP is a minimal MCP server: it completes the handshake and answers
+// dividend_calendar with a fixed calendar.
+func fakeMCP(t *testing.T) *httptest.Server {
+	t.Helper()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var msg struct {
+			ID     int64  `json:"id"`
+			Method string `json:"method"`
+		}
+		json.NewDecoder(r.Body).Decode(&msg)
+		w.Header().Set("Content-Type", "application/json")
+		switch msg.Method {
+		case "initialize":
+			fmt.Fprintf(w, `{"jsonrpc":"2.0","id":%d,"result":{"protocolVersion":"2025-06-18","serverInfo":{"name":"fake"}}}`, msg.ID)
+		case "notifications/initialized":
+			w.WriteHeader(http.StatusAccepted)
+		case "tools/call":
+			fmt.Fprintf(w, `{"jsonrpc":"2.0","id":%d,"result":{"content":[{"type":"text","text":"{\"days\":10,\"stocks\":[]}"}],"isError":false}}`, msg.ID)
+		}
+	}))
+	t.Cleanup(srv.Close)
+	return srv
+}
+
+// fakeOllamaChat replays the real two-turn exchange captured in
+// internal/llm/testdata: first the tool request, then the answer.
+func fakeOllamaChat(t *testing.T) *httptest.Server {
+	t.Helper()
+	var turn atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		io.Copy(io.Discard, r.Body)
+		file := "chat-tool-call.json"
+		if turn.Add(1) > 1 {
+			file = "chat-tool-answer.json"
+		}
+		b, err := os.ReadFile(filepath.Join("..", "..", "internal", "llm", "testdata", file))
+		if err != nil {
+			t.Errorf("fixture: %v", err)
+		}
+		w.Write(b)
+	}))
+	t.Cleanup(srv.Close)
+	return srv
+}
+
+func TestRunResearch(t *testing.T) {
+	ollama, quantic := fakeOllamaChat(t), fakeMCP(t)
+
+	var stdout, stderr bytes.Buffer
+	code := run(t.Context(), []string{"-ollama", ollama.URL, "-mcp", quantic.URL,
+		"-research", "Which companies go ex-dividend in the next 10 days?"}, &stdout, &stderr)
+
+	if code != 0 {
+		t.Fatalf("exit code = %d, want 0 (stderr: %q)", code, stderr.String())
+	}
+	if !strings.Contains(stdout.String(), "Microsoft") {
+		t.Errorf("stdout = %q, want the model's answer", stdout.String())
+	}
+	// Every tool call is traced on stderr, so a person can see what the
+	// answer was built from.
+	if got := stderr.String(); !strings.Contains(got, `tool dividend_calendar {"days":10} → `) {
+		t.Errorf("stderr = %q, want the tool call traced", got)
+	}
+}
+
+func TestRunResearchWithoutAnMCPServer(t *testing.T) {
+	var stdout, stderr bytes.Buffer
+	code := run(t.Context(), []string{"-mcp", "http://127.0.0.1:1/mcp", "-research", "q"}, &stdout, &stderr)
+
+	if code != 3 {
+		t.Errorf("exit code = %d, want 3", code)
+	}
+	if got := stderr.String(); !strings.Contains(got, "no MCP server answering at http://127.0.0.1:1/mcp") {
+		t.Errorf("stderr = %q, want it to name the MCP server", got)
 	}
 }

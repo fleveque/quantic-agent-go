@@ -1,0 +1,873 @@
+[
+  {
+    "model": "qwen3.5:9b",
+    "runs": 40,
+    "correct": 37,
+    "outcomes": [
+      {
+        "case": "explicit window",
+        "correct": true,
+        "valid": true,
+        "called": "dividend_calendar",
+        "args": "{\"days\":10}"
+      },
+      {
+        "case": "explicit window",
+        "correct": true,
+        "valid": true,
+        "called": "dividend_calendar",
+        "args": "{\"days\":10}"
+      },
+      {
+        "case": "explicit window",
+        "correct": true,
+        "valid": true,
+        "called": "dividend_calendar",
+        "args": "{\"days\":10}"
+      },
+      {
+        "case": "explicit window",
+        "correct": true,
+        "valid": true,
+        "called": "dividend_calendar",
+        "args": "{\"days\":10}"
+      },
+      {
+        "case": "explicit window",
+        "correct": true,
+        "valid": true,
+        "called": "dividend_calendar",
+        "args": "{\"days\":10}"
+      },
+      {
+        "case": "this week",
+        "correct": true,
+        "valid": true,
+        "called": "dividend_calendar",
+        "args": "{\"days\":7}"
+      },
+      {
+        "case": "this week",
+        "correct": true,
+        "valid": true,
+        "called": "dividend_calendar",
+        "args": "{\"days\":7}"
+      },
+      {
+        "case": "this week",
+        "correct": true,
+        "valid": true,
+        "called": "dividend_calendar",
+        "args": "{\"days\":7}"
+      },
+      {
+        "case": "this week",
+        "correct": true,
+        "valid": true,
+        "called": "dividend_calendar",
+        "args": "{\"days\":7}"
+      },
+      {
+        "case": "this week",
+        "correct": true,
+        "valid": true,
+        "called": "dividend_calendar",
+        "args": "{\"days\":7}"
+      },
+      {
+        "case": "two months",
+        "correct": true,
+        "valid": true,
+        "called": "dividend_calendar",
+        "args": "{\"days\":60}"
+      },
+      {
+        "case": "two months",
+        "correct": true,
+        "valid": true,
+        "called": "dividend_calendar",
+        "args": "{\"days\":60}"
+      },
+      {
+        "case": "two months",
+        "correct": true,
+        "valid": true,
+        "called": "dividend_calendar",
+        "args": "{\"days\":61}"
+      },
+      {
+        "case": "two months",
+        "correct": true,
+        "valid": true,
+        "called": "dividend_calendar",
+        "args": "{\"days\":60}"
+      },
+      {
+        "case": "two months",
+        "correct": true,
+        "valid": true,
+        "called": "dividend_calendar",
+        "args": "{\"days\":60}"
+      },
+      {
+        "case": "beyond the maximum",
+        "correct": true,
+        "valid": true,
+        "called": "dividend_calendar",
+        "args": "{\"days\":120}"
+      },
+      {
+        "case": "beyond the maximum",
+        "correct": false,
+        "valid": true,
+        "called": "dividend_calendar",
+        "args": "{\"days\":180}",
+        "reason": "asked for 180 days, want 120–120"
+      },
+      {
+        "case": "beyond the maximum",
+        "correct": false,
+        "valid": true,
+        "called": "dividend_calendar",
+        "args": "{\"days\":180}",
+        "reason": "asked for 180 days, want 120–120"
+      },
+      {
+        "case": "beyond the maximum",
+        "correct": false,
+        "valid": true,
+        "called": "dividend_calendar",
+        "args": "{\"days\":180}",
+        "reason": "asked for 180 days, want 120–120"
+      },
+      {
+        "case": "beyond the maximum",
+        "correct": true,
+        "valid": true,
+        "called": "dividend_calendar",
+        "args": "{\"days\":120}"
+      },
+      {
+        "case": "no window given",
+        "correct": true,
+        "valid": true,
+        "called": "dividend_calendar",
+        "args": "{\"days\":45}"
+      },
+      {
+        "case": "no window given",
+        "correct": true,
+        "valid": true,
+        "called": "dividend_calendar",
+        "args": "{\"days\":30}"
+      },
+      {
+        "case": "no window given",
+        "correct": true,
+        "valid": true,
+        "called": "dividend_calendar",
+        "args": "{\"days\":30}"
+      },
+      {
+        "case": "no window given",
+        "correct": true,
+        "valid": true,
+        "called": "dividend_calendar",
+        "args": "{\"days\":30}"
+      },
+      {
+        "case": "no window given",
+        "correct": true,
+        "valid": true,
+        "called": "dividend_calendar",
+        "args": "{\"days\":45}"
+      },
+      {
+        "case": "one company",
+        "correct": true,
+        "valid": true,
+        "called": "dividend_calendar",
+        "args": "{\"days\":120}"
+      },
+      {
+        "case": "one company",
+        "correct": true,
+        "valid": true,
+        "called": "dividend_calendar",
+        "args": "{\"days\":120}"
+      },
+      {
+        "case": "one company",
+        "correct": true,
+        "valid": true,
+        "called": "dividend_calendar",
+        "args": "{\"days\":120}"
+      },
+      {
+        "case": "one company",
+        "correct": true,
+        "valid": true,
+        "called": "dividend_calendar",
+        "args": "{\"days\":120}"
+      },
+      {
+        "case": "one company",
+        "correct": true,
+        "valid": true,
+        "called": "dividend_calendar",
+        "args": "{\"days\":120}"
+      },
+      {
+        "case": "definition, no tool",
+        "correct": true,
+        "valid": true,
+        "called": "",
+        "args": ""
+      },
+      {
+        "case": "definition, no tool",
+        "correct": true,
+        "valid": true,
+        "called": "",
+        "args": ""
+      },
+      {
+        "case": "definition, no tool",
+        "correct": true,
+        "valid": true,
+        "called": "",
+        "args": ""
+      },
+      {
+        "case": "definition, no tool",
+        "correct": true,
+        "valid": true,
+        "called": "",
+        "args": ""
+      },
+      {
+        "case": "definition, no tool",
+        "correct": true,
+        "valid": true,
+        "called": "",
+        "args": ""
+      },
+      {
+        "case": "arithmetic, no tool",
+        "correct": true,
+        "valid": true,
+        "called": "",
+        "args": ""
+      },
+      {
+        "case": "arithmetic, no tool",
+        "correct": true,
+        "valid": true,
+        "called": "",
+        "args": ""
+      },
+      {
+        "case": "arithmetic, no tool",
+        "correct": true,
+        "valid": true,
+        "called": "",
+        "args": ""
+      },
+      {
+        "case": "arithmetic, no tool",
+        "correct": true,
+        "valid": true,
+        "called": "",
+        "args": ""
+      },
+      {
+        "case": "arithmetic, no tool",
+        "correct": true,
+        "valid": true,
+        "called": "",
+        "args": ""
+      }
+    ]
+  },
+  {
+    "model": "qwen3.6:35b",
+    "runs": 40,
+    "correct": 35,
+    "outcomes": [
+      {
+        "case": "explicit window",
+        "correct": true,
+        "valid": true,
+        "called": "dividend_calendar",
+        "args": "{\"days\":10}"
+      },
+      {
+        "case": "explicit window",
+        "correct": true,
+        "valid": true,
+        "called": "dividend_calendar",
+        "args": "{\"days\":10}"
+      },
+      {
+        "case": "explicit window",
+        "correct": true,
+        "valid": true,
+        "called": "dividend_calendar",
+        "args": "{\"days\":10}"
+      },
+      {
+        "case": "explicit window",
+        "correct": true,
+        "valid": true,
+        "called": "dividend_calendar",
+        "args": "{\"days\":10}"
+      },
+      {
+        "case": "explicit window",
+        "correct": true,
+        "valid": true,
+        "called": "dividend_calendar",
+        "args": "{\"days\":10}"
+      },
+      {
+        "case": "this week",
+        "correct": true,
+        "valid": true,
+        "called": "dividend_calendar",
+        "args": "{\"days\":7}"
+      },
+      {
+        "case": "this week",
+        "correct": true,
+        "valid": true,
+        "called": "dividend_calendar",
+        "args": "{\"days\":7}"
+      },
+      {
+        "case": "this week",
+        "correct": true,
+        "valid": true,
+        "called": "dividend_calendar",
+        "args": "{\"days\":7}"
+      },
+      {
+        "case": "this week",
+        "correct": true,
+        "valid": true,
+        "called": "dividend_calendar",
+        "args": "{\"days\":7}"
+      },
+      {
+        "case": "this week",
+        "correct": true,
+        "valid": true,
+        "called": "dividend_calendar",
+        "args": "{\"days\":7}"
+      },
+      {
+        "case": "two months",
+        "correct": true,
+        "valid": true,
+        "called": "dividend_calendar",
+        "args": "{\"days\":60}"
+      },
+      {
+        "case": "two months",
+        "correct": true,
+        "valid": true,
+        "called": "dividend_calendar",
+        "args": "{\"days\":60}"
+      },
+      {
+        "case": "two months",
+        "correct": true,
+        "valid": true,
+        "called": "dividend_calendar",
+        "args": "{\"days\":60}"
+      },
+      {
+        "case": "two months",
+        "correct": true,
+        "valid": true,
+        "called": "dividend_calendar",
+        "args": "{\"days\":60}"
+      },
+      {
+        "case": "two months",
+        "correct": true,
+        "valid": true,
+        "called": "dividend_calendar",
+        "args": "{\"days\":60}"
+      },
+      {
+        "case": "beyond the maximum",
+        "correct": false,
+        "valid": true,
+        "called": "dividend_calendar",
+        "args": "{\"days\":180}",
+        "reason": "asked for 180 days, want 120–120"
+      },
+      {
+        "case": "beyond the maximum",
+        "correct": false,
+        "valid": true,
+        "called": "dividend_calendar",
+        "args": "{\"days\":180}",
+        "reason": "asked for 180 days, want 120–120"
+      },
+      {
+        "case": "beyond the maximum",
+        "correct": false,
+        "valid": true,
+        "called": "dividend_calendar",
+        "args": "{\"days\":180}",
+        "reason": "asked for 180 days, want 120–120"
+      },
+      {
+        "case": "beyond the maximum",
+        "correct": false,
+        "valid": true,
+        "called": "dividend_calendar",
+        "args": "{\"days\":180}",
+        "reason": "asked for 180 days, want 120–120"
+      },
+      {
+        "case": "beyond the maximum",
+        "correct": false,
+        "valid": true,
+        "called": "dividend_calendar",
+        "args": "{\"days\":180}",
+        "reason": "asked for 180 days, want 120–120"
+      },
+      {
+        "case": "no window given",
+        "correct": true,
+        "valid": true,
+        "called": "dividend_calendar",
+        "args": "{\"days\":45}"
+      },
+      {
+        "case": "no window given",
+        "correct": true,
+        "valid": true,
+        "called": "dividend_calendar",
+        "args": "{\"days\":45}"
+      },
+      {
+        "case": "no window given",
+        "correct": true,
+        "valid": true,
+        "called": "dividend_calendar",
+        "args": "{\"days\":45}"
+      },
+      {
+        "case": "no window given",
+        "correct": true,
+        "valid": true,
+        "called": "dividend_calendar",
+        "args": "{\"days\":45}"
+      },
+      {
+        "case": "no window given",
+        "correct": true,
+        "valid": true,
+        "called": "dividend_calendar",
+        "args": "{\"days\":45}"
+      },
+      {
+        "case": "one company",
+        "correct": true,
+        "valid": true,
+        "called": "dividend_calendar",
+        "args": "{\"days\":120}"
+      },
+      {
+        "case": "one company",
+        "correct": true,
+        "valid": true,
+        "called": "dividend_calendar",
+        "args": "{\"days\":120}"
+      },
+      {
+        "case": "one company",
+        "correct": true,
+        "valid": true,
+        "called": "dividend_calendar",
+        "args": "{\"days\":365}"
+      },
+      {
+        "case": "one company",
+        "correct": true,
+        "valid": true,
+        "called": "dividend_calendar",
+        "args": "{\"days\":120}"
+      },
+      {
+        "case": "one company",
+        "correct": true,
+        "valid": true,
+        "called": "dividend_calendar",
+        "args": "{\"days\":120}"
+      },
+      {
+        "case": "definition, no tool",
+        "correct": true,
+        "valid": true,
+        "called": "",
+        "args": ""
+      },
+      {
+        "case": "definition, no tool",
+        "correct": true,
+        "valid": true,
+        "called": "",
+        "args": ""
+      },
+      {
+        "case": "definition, no tool",
+        "correct": true,
+        "valid": true,
+        "called": "",
+        "args": ""
+      },
+      {
+        "case": "definition, no tool",
+        "correct": true,
+        "valid": true,
+        "called": "",
+        "args": ""
+      },
+      {
+        "case": "definition, no tool",
+        "correct": true,
+        "valid": true,
+        "called": "",
+        "args": ""
+      },
+      {
+        "case": "arithmetic, no tool",
+        "correct": true,
+        "valid": true,
+        "called": "",
+        "args": ""
+      },
+      {
+        "case": "arithmetic, no tool",
+        "correct": true,
+        "valid": true,
+        "called": "",
+        "args": ""
+      },
+      {
+        "case": "arithmetic, no tool",
+        "correct": true,
+        "valid": true,
+        "called": "",
+        "args": ""
+      },
+      {
+        "case": "arithmetic, no tool",
+        "correct": true,
+        "valid": true,
+        "called": "",
+        "args": ""
+      },
+      {
+        "case": "arithmetic, no tool",
+        "correct": true,
+        "valid": true,
+        "called": "",
+        "args": ""
+      }
+    ]
+  },
+  {
+    "model": "hf.co/unsloth/Qwen3.8-27B-GGUF:UD-IQ3_S",
+    "runs": 40,
+    "correct": 38,
+    "outcomes": [
+      {
+        "case": "explicit window",
+        "correct": true,
+        "valid": true,
+        "called": "dividend_calendar",
+        "args": "{\"days\":10}"
+      },
+      {
+        "case": "explicit window",
+        "correct": true,
+        "valid": true,
+        "called": "dividend_calendar",
+        "args": "{\"days\":10}"
+      },
+      {
+        "case": "explicit window",
+        "correct": true,
+        "valid": true,
+        "called": "dividend_calendar",
+        "args": "{\"days\":10}"
+      },
+      {
+        "case": "explicit window",
+        "correct": true,
+        "valid": true,
+        "called": "dividend_calendar",
+        "args": "{\"days\":10}"
+      },
+      {
+        "case": "explicit window",
+        "correct": true,
+        "valid": true,
+        "called": "dividend_calendar",
+        "args": "{\"days\":10}"
+      },
+      {
+        "case": "this week",
+        "correct": true,
+        "valid": true,
+        "called": "dividend_calendar",
+        "args": "{\"days\":7}"
+      },
+      {
+        "case": "this week",
+        "correct": true,
+        "valid": true,
+        "called": "dividend_calendar",
+        "args": "{\"days\":7}"
+      },
+      {
+        "case": "this week",
+        "correct": true,
+        "valid": true,
+        "called": "dividend_calendar",
+        "args": "{\"days\":7}"
+      },
+      {
+        "case": "this week",
+        "correct": true,
+        "valid": true,
+        "called": "dividend_calendar",
+        "args": "{\"days\":7}"
+      },
+      {
+        "case": "this week",
+        "correct": true,
+        "valid": true,
+        "called": "dividend_calendar",
+        "args": "{\"days\":7}"
+      },
+      {
+        "case": "two months",
+        "correct": true,
+        "valid": true,
+        "called": "dividend_calendar",
+        "args": "{\"days\":60}"
+      },
+      {
+        "case": "two months",
+        "correct": true,
+        "valid": true,
+        "called": "dividend_calendar",
+        "args": "{\"days\":60}"
+      },
+      {
+        "case": "two months",
+        "correct": true,
+        "valid": true,
+        "called": "dividend_calendar",
+        "args": "{\"days\":60}"
+      },
+      {
+        "case": "two months",
+        "correct": true,
+        "valid": true,
+        "called": "dividend_calendar",
+        "args": "{\"days\":60}"
+      },
+      {
+        "case": "two months",
+        "correct": true,
+        "valid": true,
+        "called": "dividend_calendar",
+        "args": "{\"days\":60}"
+      },
+      {
+        "case": "beyond the maximum",
+        "correct": true,
+        "valid": true,
+        "called": "dividend_calendar",
+        "args": "{\"days\":120}"
+      },
+      {
+        "case": "beyond the maximum",
+        "correct": false,
+        "valid": true,
+        "called": "dividend_calendar",
+        "args": "{\"days\":182}",
+        "reason": "asked for 182 days, want 120–120"
+      },
+      {
+        "case": "beyond the maximum",
+        "correct": true,
+        "valid": true,
+        "called": "dividend_calendar",
+        "args": "{\"days\":120}"
+      },
+      {
+        "case": "beyond the maximum",
+        "correct": false,
+        "valid": true,
+        "called": "dividend_calendar",
+        "args": "{\"days\":183}",
+        "reason": "asked for 183 days, want 120–120"
+      },
+      {
+        "case": "beyond the maximum",
+        "correct": true,
+        "valid": true,
+        "called": "dividend_calendar",
+        "args": "{\"days\":120}"
+      },
+      {
+        "case": "no window given",
+        "correct": true,
+        "valid": true,
+        "called": "dividend_calendar",
+        "args": "{\"days\":45}"
+      },
+      {
+        "case": "no window given",
+        "correct": true,
+        "valid": true,
+        "called": "dividend_calendar",
+        "args": "{\"days\":45}"
+      },
+      {
+        "case": "no window given",
+        "correct": true,
+        "valid": true,
+        "called": "dividend_calendar",
+        "args": "{}"
+      },
+      {
+        "case": "no window given",
+        "correct": true,
+        "valid": true,
+        "called": "dividend_calendar",
+        "args": "{}"
+      },
+      {
+        "case": "no window given",
+        "correct": true,
+        "valid": true,
+        "called": "dividend_calendar",
+        "args": "{}"
+      },
+      {
+        "case": "one company",
+        "correct": true,
+        "valid": true,
+        "called": "dividend_calendar",
+        "args": "{\"days\":45}"
+      },
+      {
+        "case": "one company",
+        "correct": true,
+        "valid": true,
+        "called": "dividend_calendar",
+        "args": "{\"days\":120}"
+      },
+      {
+        "case": "one company",
+        "correct": true,
+        "valid": true,
+        "called": "dividend_calendar",
+        "args": "{\"days\":45}"
+      },
+      {
+        "case": "one company",
+        "correct": true,
+        "valid": true,
+        "called": "dividend_calendar",
+        "args": "{\"days\":120}"
+      },
+      {
+        "case": "one company",
+        "correct": true,
+        "valid": true,
+        "called": "dividend_calendar",
+        "args": "{\"days\":120}"
+      },
+      {
+        "case": "definition, no tool",
+        "correct": true,
+        "valid": true,
+        "called": "",
+        "args": ""
+      },
+      {
+        "case": "definition, no tool",
+        "correct": true,
+        "valid": true,
+        "called": "",
+        "args": ""
+      },
+      {
+        "case": "definition, no tool",
+        "correct": true,
+        "valid": true,
+        "called": "",
+        "args": ""
+      },
+      {
+        "case": "definition, no tool",
+        "correct": true,
+        "valid": true,
+        "called": "",
+        "args": ""
+      },
+      {
+        "case": "definition, no tool",
+        "correct": true,
+        "valid": true,
+        "called": "",
+        "args": ""
+      },
+      {
+        "case": "arithmetic, no tool",
+        "correct": true,
+        "valid": true,
+        "called": "",
+        "args": ""
+      },
+      {
+        "case": "arithmetic, no tool",
+        "correct": true,
+        "valid": true,
+        "called": "",
+        "args": ""
+      },
+      {
+        "case": "arithmetic, no tool",
+        "correct": true,
+        "valid": true,
+        "called": "",
+        "args": ""
+      },
+      {
+        "case": "arithmetic, no tool",
+        "correct": true,
+        "valid": true,
+        "called": "",
+        "args": ""
+      },
+      {
+        "case": "arithmetic, no tool",
+        "correct": true,
+        "valid": true,
+        "called": "",
+        "args": ""
+      }
+    ]
+  }
+]
