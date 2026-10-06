@@ -131,6 +131,19 @@ than regex extraction — and the prose is validated by the simpler assertion th
 unaccounted numerics at all. This also removes the locale number-format problem entirely: figures
 never appear in translated text.
 
+**As built (milestone 6, [`internal/provenance`](../internal/provenance/)).** The manifest indexes
+every number, date and string in a run's successful tool results, with the path each came from.
+`CheckData` holds a post's data block to it field by field, strings included, so an invented ticker
+fails like a rounded yield. `CheckProse` covers free text such as `agent -research` answers: it finds
+numbers (currency, percent, thousands separators), dates (ISO, "Oct 8", "8 October 2026") and bare
+years, and reports any the manifest lacks. Matching is exact: a rounded, converted or derived figure is
+reported. The false positives above are handled by rule: digits inside words (`Q3`, `W38`) and list
+positions at a line start aren't claims, and a bare year counts if a returned date falls in it. Known
+limits, acceptable because post prose must have no figures at all (`NoFigures`): numbers written as
+words aren't seen, and only English number formats are parsed. In real runs, five of six research
+answers traced fully; the sixth said "the next 4 months", a figure the model derived itself, which is
+exactly what N1 forbids.
+
 ### 3.4 Retrieval (RAG)
 
 Retrieval does not make the model *learn* — the weights never change; it puts relevant text in the

@@ -272,9 +272,10 @@ func TestRunStopsWhenInterrupted(t *testing.T) {
 }
 
 // fakeMCP is a minimal MCP server: it completes the handshake and answers
-// dividend_calendar with a fixed calendar.
-func fakeMCP(t *testing.T) *httptest.Server {
+// dividend_calendar with calendar, a tool result as JSON text.
+func fakeMCP(t *testing.T, calendar string) *httptest.Server {
 	t.Helper()
+	text, _ := json.Marshal(calendar) // the result travels as a JSON string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		var msg struct {
 			ID     int64  `json:"id"`
@@ -288,7 +289,7 @@ func fakeMCP(t *testing.T) *httptest.Server {
 		case "notifications/initialized":
 			w.WriteHeader(http.StatusAccepted)
 		case "tools/call":
-			fmt.Fprintf(w, `{"jsonrpc":"2.0","id":%d,"result":{"content":[{"type":"text","text":"{\"days\":10,\"stocks\":[]}"}],"isError":false}}`, msg.ID)
+			fmt.Fprintf(w, `{"jsonrpc":"2.0","id":%d,"result":{"content":[{"type":"text","text":%s}],"isError":false}}`, msg.ID, text)
 		}
 	}))
 	t.Cleanup(srv.Close)
@@ -316,8 +317,32 @@ func fakeOllamaChat(t *testing.T) *httptest.Server {
 	return srv
 }
 
+// realCalendar is the 10-day calendar the captured answer was written from.
+func realCalendar(t *testing.T) string {
+	t.Helper()
+	sse, err := os.ReadFile(filepath.Join("..", "..", "internal", "mcp", "testdata", "call-dividend-calendar.sse"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for line := range strings.SplitSeq(string(sse), "\n") {
+		if data, ok := strings.CutPrefix(line, "data: "); ok {
+			var msg struct {
+				Result struct {
+					Content []struct{ Text string } `json:"content"`
+				} `json:"result"`
+			}
+			if err := json.Unmarshal([]byte(data), &msg); err != nil {
+				t.Fatal(err)
+			}
+			return msg.Result.Content[0].Text
+		}
+	}
+	t.Fatal("no data line")
+	return ""
+}
+
 func TestRunResearch(t *testing.T) {
-	ollama, quantic := fakeOllamaChat(t), fakeMCP(t)
+	ollama, quantic := fakeOllamaChat(t), fakeMCP(t, realCalendar(t))
 
 	var stdout, stderr bytes.Buffer
 	code := run(t.Context(), []string{"-ollama", ollama.URL, "-mcp", quantic.URL,
@@ -345,5 +370,31 @@ func TestRunResearchWithoutAnMCPServer(t *testing.T) {
 	}
 	if got := stderr.String(); !strings.Contains(got, "no MCP server answering at http://127.0.0.1:1/mcp") {
 		t.Errorf("stderr = %q, want it to name the MCP server", got)
+	}
+}
+
+// The same real answer, but the tool returned an empty calendar: every date in
+// the answer is now unaccounted for, and the run says so.
+func TestRunResearchRejectsFiguresNoToolReturned(t *testing.T) {
+	ollama, quantic := fakeOllamaChat(t), fakeMCP(t, `{"from":"2026-10-06","days":10,"stocks":[]}`)
+
+	var stdout, stderr bytes.Buffer
+	code := run(t.Context(), []string{"-ollama", ollama.URL, "-mcp", quantic.URL, "-research", "q"}, &stdout, &stderr)
+
+	if code != 4 {
+		t.Errorf("exit code = %d, want 4", code)
+	}
+	if stdout.Len() == 0 {
+		t.Error("stdout is empty; the answer should still be shown")
+	}
+	got := stderr.String()
+	for _, want := range []string{"came from no tool result", `"Oct 8" (date --10-08)`, `"Oct 16"`} {
+		if !strings.Contains(got, want) {
+			t.Errorf("stderr = %q, want it to mention %q", got, want)
+		}
+	}
+	// Dates the empty calendar does contain are still accounted for.
+	if strings.Contains(got, "October 6, 2026") {
+		t.Errorf("stderr = %q; 2026-10-06 is the calendar's own start date", got)
 	}
 }
