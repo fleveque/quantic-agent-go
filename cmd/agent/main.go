@@ -6,7 +6,8 @@
 // call it made to stderr.
 //
 // Exit status: 0 success, 1 failure (including -timeout running out), 2 wrong
-// usage, 3 the model server wasn't there to answer, 130 stopped by Ctrl-C or
+// usage, 3 the model server wasn't there to answer, 4 a -research answer
+// contains figures no tool returned (design N1), 130 stopped by Ctrl-C or
 // SIGTERM. 3 means nothing was attempted, so a scheduler can simply run the
 // same command again later (design §3.6). On 130 the request in flight was
 // cancelled, and Ollama stops working on it too.
@@ -28,6 +29,7 @@ import (
 	"github.com/fleveque/quantic-agent/internal/agent"
 	"github.com/fleveque/quantic-agent/internal/llm"
 	"github.com/fleveque/quantic-agent/internal/mcp"
+	"github.com/fleveque/quantic-agent/internal/provenance"
 	"github.com/fleveque/quantic-agent/internal/tools"
 )
 
@@ -48,6 +50,7 @@ const (
 	exitFailed      = 1
 	exitUsage       = 2
 	exitUnavailable = 3
+	exitUnverified  = 4
 	exitInterrupted = 130 // 128 + SIGINT, the shell's convention for Ctrl-C
 )
 
@@ -171,11 +174,37 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 		if answer.Truncated {
 			fmt.Fprintln(stderr, "agent: the answer was truncated: the model hit its token limit")
 		}
-		return exitOK
+		return verify(stderr, answer)
 	}
 
 	fmt.Fprintln(stdout, "quantic-agent: no tasks defined yet")
 	return exitOK
+}
+
+// verify checks every figure in a research answer against the data its tool
+// calls returned (design N1). The answer has already been printed, so a person
+// can see it; the findings and the exit status say it can't be trusted.
+func verify(stderr io.Writer, answer agent.Answer) int {
+	var records []provenance.Record
+	for _, c := range answer.Calls {
+		if !c.Failed {
+			records = append(records, provenance.Record{Tool: c.Tool, Result: c.Result})
+		}
+	}
+	m, err := provenance.NewManifest(records...)
+	if err != nil {
+		fmt.Fprintln(stderr, "agent:", err)
+		return exitFailed
+	}
+	findings := provenance.CheckProse(answer.Text, m)
+	if len(findings) == 0 {
+		return exitOK
+	}
+	fmt.Fprintf(stderr, "agent: %d figure(s) in the answer came from no tool result:\n", len(findings))
+	for _, f := range findings {
+		fmt.Fprintf(stderr, "  %s\n", f)
+	}
+	return exitUnverified
 }
 
 // callSummary describes a tool call's outcome in a few words for the trace.
