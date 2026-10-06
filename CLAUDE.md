@@ -31,8 +31,8 @@ learning record. Start with [README.md](README.md) and [docs/design.md](docs/des
 ## Next, in order
 
 1. **Milestone 8 — the research loop**. First, replace the hand-written migrations in `internal/store`
-   with `pressly/goose` (design §3.7: down migrations, cross-process locking), keeping `0001` and its
-   tests. Then budgets for calls, wall-clock and tokens (design §3.2),
+   with `pressly/goose` (design §3.7: the usual Go approach, after doing it by hand; down migrations,
+   cross-process locking), keeping `0001` and its tests. Lesson 08 compares the two. Then budgets for calls, wall-clock and tokens (design §3.2),
    retries with backoff (a `429` from Quantic's anonymous rate limit, ADR 0006), and phases with
    checkpoints in SQLite so an interrupted run resumes (design §3.6).
 2. Week Ahead data needs `get_stock` per company (amounts, yields).

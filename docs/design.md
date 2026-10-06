@@ -275,14 +275,12 @@ at the same moment can collide: in a test of 20 simultaneous pairs, 2 of the 40 
 start succeeds, but that process exits with an error. Milestone 9's worker pool is one process, so it's
 unaffected.
 
-**Decision: switch to goose at the start of milestone 8**, before the second migration is written. Down
-migrations are the main reason: they matter most while a schema is still changing, when a new
-migration turns out wrong and needs undoing and redoing, and milestone 8 brings the first schema change
-(run phases and checkpoints). Goose also brings cross-process locking and a CLI. It reads SQL
-migrations from an `embed.FS`, so `0001` carries over, gaining the `-- +goose Up` / `-- +goose Down`
-markers. The other triggers still stand if the switch is ever reconsidered: more than one process
-starting against the database at once (a systemd timer firing while the daemon runs), or a move to
-PostgreSQL.
+**Decision: switch to goose at the start of milestone 8.** A migration library is what most Go
+applications with a SQL database use (`golang-migrate/migrate` and `pressly/goose` are the two usual
+ones), and doing it by hand first, then with the library, shows both approaches. Goose brings what the
+hand-written version lacks: down migrations to undo a migration that turned out wrong, locking across
+processes, and a CLI. It reads SQL migrations from an `embed.FS`, so `0001` carries over, gaining the
+`-- +goose Up` / `-- +goose Down` markers.
 
 ### 3.8 Delivery
 
