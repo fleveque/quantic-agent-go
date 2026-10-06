@@ -7,9 +7,9 @@ pulls **real financial data** from Quantic's MCP server, and turns it into draft
 reports and small code changes — delivered as **pull requests and review-queue entries, never as
 anything published automatically**.
 
-> **Status: milestone 5.** The agent calls its first real tool: `agent -research` lets the local
-> model ask Quantic's MCP server for the dividend calendar and answers from what comes back, tracing
-> every call. `agent -check` reports the model server and its models, every call has a deadline, and
+> **Status: milestone 6.** The agent calls real tools and checks its own answers: `agent -research`
+> lets the local model ask Quantic's MCP server for data, answers from what comes back, and then
+> verifies that every figure in the answer traces to a tool result, rejecting the answer if one doesn't. `agent -check` reports the model server and its models, every call has a deadline, and
 > Ctrl-C or a service stop cancels the request in flight. `cmd/evaltools` measures how well each model
 > picks and calls tools. No scheduled tasks yet. Slow on purpose —
 > the project doubles as my way of learning Go in public, so the commit history *is* the learning record.
@@ -198,8 +198,8 @@ the point is learning Go, not just having an agent.
 | 2 | Ollama client: send a prompt, decode the response | structs, JSON tags, interfaces, `net/http` |
 | 3 | Error handling across the LLM boundary | `error` values, wrapping, `errors.Is/As`, sentinels |
 | 4 | Timeouts and cancellation for slow generations | `context`, deadlines, graceful shutdown |
-| 5 | First real tool: `dividend_calendar` end to end *(you are here)* | schema from structs, reflection, MCP auth |
-| 6 | Provenance validator + table-driven tests | slices/maps, `testing`, `httptest`, fakes |
+| 5 | First real tool: `dividend_calendar` end to end | schema from structs, reflection, MCP auth |
+| 6 | Provenance validator + table-driven tests *(you are here)* | slices/maps, `testing`, `httptest`, fakes |
 | 7 | SQLite: runs, drafts, audit log | `database/sql`, migrations, transactions |
 | 8 | **The agentic research loop** — dispatch, budgets, retries | state machines, backoff, `context` in a loop |
 | 9 | Worker pool: serialised GPU, parallel I/O | goroutines, channels, `sync`, `errgroup`, semaphores |

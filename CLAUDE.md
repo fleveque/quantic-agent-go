@@ -22,11 +22,14 @@ learning record. Start with [README.md](README.md) and [docs/design.md](docs/des
   `internal/mcp` (Streamable HTTP, anonymous; [ADR 0006](docs/decisions/0006-anonymous-mcp-for-public-tools.md)),
   `internal/tools` (schemas and bounds from structs), `internal/agent` (the loop's seed),
   `cmd/evaltools` (tool-call evaluation; results in `docs/benchmarks/`).
+- Milestone 6 (provenance): `internal/provenance` — `CheckData` (exact, field by field),
+  `CheckProse` (figures in free text), `NoFigures`; `agent -research` exits 4 on unverified figures.
 
 ## Next, in order
 
-1. **Milestone 6 — the provenance validator**: every figure in a draft traces to a recorded tool
-   call (design §3.3, N1). `agent.Answer.Calls` is the record it validates against.
+1. **Milestone 7 — SQLite**: runs, drafts and the tool-call audit log (design §3.7, N3) via
+   `modernc.org/sqlite` (pure Go, no cgo). Persist `agent.Answer.Calls`; the manifest is rebuilt
+   from them.
 2. Week Ahead data needs `get_stock` per company (amounts, yields) and pacing under the anonymous
    rate limit of 60 requests/minute (ADR 0006).
 

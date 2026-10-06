@@ -181,6 +181,7 @@ this on a trusted LAN, ideally with a firewall rule limiting port 11434 to the l
 | `X is not on this server` | Model not pulled | `ollama list`, then `ollama pull X` |
 | `no model server answering at …`, exit status 3 | Ollama stopped, restarting, or on another host that's off | `systemctl status ollama`; start it (section 8). Nothing was attempted, so rerunning is safe |
 | `the model server failed; its log has the cause` | Ollama answered 5xx, e.g. a model it couldn't load | `journalctl -u ollama -e` |
+| `figure(s) in the answer came from no tool result`, exit status 4 | `-research` answer contains a number or date no tool returned: invented, rounded, or derived by the model (e.g. "4 months" from 120 days) | Working as intended (design N1). The answer is shown so you can see it, but it isn't trustworthy |
 | `gave up after 5m0s (-timeout)` | The request took longer than `-timeout`: a slow model at a long context, or a stuck server | Raise `-timeout`, or check `ollama ps` for a model that spilled into system RAM. Too short a timeout during a cold load aborts the load |
 | `ON GPU 0% (CPU)` on the desktop | Ollama not using the GPU | `nvidia-smi`; `journalctl -u ollama -b \| grep -iE 'cuda\|gpu'` |
 | 64K row much slower than 32K, `ON GPU` below 100% | Cache no longer fits beside the weights | Expected at the limit — that's the measurement. Try section 6. |

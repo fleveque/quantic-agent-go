@@ -15,6 +15,7 @@ where I found it non-obvious.
 | [03](03-errors-you-can-ask-questions-of.md) | Errors you can ask questions of | 3 — errors across the LLM boundary | [Errors you can ask questions of](https://claude.ai/artifact/CCH115UXhRfsN5N16eXRHf) | [Errors, line by line](https://claude.ai/artifact/6HdVkT2Z8FGZoyxMnyaJ5i) |
 | [04](04-deadlines-and-letting-go.md) | Deadlines, and letting go cleanly | 4 — timeouts and cancellation | [Deadlines, and letting go cleanly](https://claude.ai/artifact/LCHhkZQtTehnjSNXRyVWJv) | [Deadlines, line by line](https://claude.ai/artifact/LvtwYVQmph38YeYdrjSRte) |
 | [05](05-the-first-real-tool.md) | The first real tool | 5 — `dividend_calendar` end to end | [The first real tool](https://claude.ai/artifact/9Fe5FJdzbCf2jTGMyTdLNd) | [The first tool, line by line](https://claude.ai/artifact/UJFF5Uiz7EwZJ75StoJwHE) |
+| [06](06-every-figure-has-a-source.md) | Every figure has a source | 6 — the provenance validator | [Every figure has a source](https://claude.ai/artifact/VneRrzy5zK36bKXuX48uzb) | [Provenance, line by line](https://claude.ai/artifact/PJ7YDwFzobrQMCoKEB5UJ7) |
 | [10](10-vector-search-without-a-vector-db.md) | Vector search without a vector database | 10 — retrieval | [Vector search without a vector database](https://claude.ai/code/artifact/4cf71989-6588-4864-b3bc-314781a156b1) | — |
 
 Lessons tell the story of a milestone: what surprised me and why. Walkthroughs go through the code

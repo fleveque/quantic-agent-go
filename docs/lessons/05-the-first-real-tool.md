@@ -204,4 +204,4 @@ keep anyway, by showing me where my *agent* needed to be stricter.
 ---
 
 **Previous:** [Lesson 04 — Deadlines, and letting go cleanly](04-deadlines-and-letting-go.md) ·
-**Next:** Lesson 06 — the provenance validator *(not written yet)*
+**Next:** [Lesson 06 — Every figure has a source](06-every-figure-has-a-source.md)
