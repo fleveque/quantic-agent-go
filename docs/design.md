@@ -266,6 +266,18 @@ audit trail, and `agent -run N` re-checks a stored answer against exactly the re
 whatever the tools would say today. The database lives at `$XDG_STATE_HOME/quantic-agent/agent.db`
 (`~/.local/state/...` by default); `-db` or `QUANTIC_AGENT_DB` override it.
 
+**Migrations are hand-written, on purpose, with a known gap.** Go's standard library has no migration
+tool; the usual choices are `pressly/goose` or `golang-migrate/migrate`. For one process, SQLite and
+forward-only migrations, forty lines in `internal/store` do the job without a dependency. What they
+lack: down migrations, a CLI, and **locking across processes**. Two processes opening a *new* database
+at the same moment can collide: in a test of 20 simultaneous pairs, 2 of the 40 opens failed with
+`database is locked (SQLITE_BUSY)` while creating `schema_migrations`. Nothing is lost, and the next
+start succeeds, but that process exits with an error. Milestone 9's worker pool is one process, so it's
+unaffected. **Switch to goose when any of these becomes true:** more than one process can start against
+the database at once (for example a systemd timer firing while the daemon runs), a migration needs
+rolling back, or the store moves to PostgreSQL. Goose reads SQL migrations from an `embed.FS`, so the
+existing files carry over.
+
 ### 3.8 Delivery
 
 - **Review queue** — SQLite rows plus a minimal read-only HTTP view (`net/http` + `html/template`,
