@@ -240,7 +240,7 @@ The interesting shape: **one GPU, many network calls.**
   client reports that case as `llm.ErrUnavailable`, distinct from every other failure, and the
   agent exits with status 3 for it so a scheduler knows a retry is safe. `SIGTERM` (or Ctrl-C)
   cancels the request in flight and exits with 130; Ollama stops generating within about a second,
-  so stopping the agent gives the GPU back straight away. The runbook has the commands ([target machine §8](target-machine.md#8-freeing-the-gpu)).
+  so stopping the agent gives the GPU back straight away. The runbook has the commands ([target machine §8](target-machine.md#9-freeing-the-gpu)).
 
 ### 3.7 Storage
 
@@ -256,6 +256,15 @@ SQLite via `modernc.org/sqlite` (pure Go, no cgo — preserves the static-binary
   accept-rate metric)*
 
 Retention: `tool_calls` responses can be large; plan a compaction policy before it becomes a problem.
+
+**As built (milestone 7, [`internal/store`](../internal/store/)).** `runs`, `tool_calls` and `drafts`
+exist; the draft's `validator_report` is its list of provenance findings. `manifests` isn't needed yet:
+a draft is checked against all its run's successful calls, so the run *is* the link. It arrives when one
+run produces several drafts. Migrations are numbered SQL files embedded in the binary, each applied once
+in its own transaction. Tool calls are written as they happen, so a stopped or crashed run keeps its
+audit trail, and `agent -run N` re-checks a stored answer against exactly the results it was given,
+whatever the tools would say today. The database lives at `$XDG_STATE_HOME/quantic-agent/agent.db`
+(`~/.local/state/...` by default); `-db` or `QUANTIC_AGENT_DB` override it.
 
 ### 3.8 Delivery
 

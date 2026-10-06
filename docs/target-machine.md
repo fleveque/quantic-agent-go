@@ -131,7 +131,21 @@ the default; the raw files are in [`benchmarks/`](benchmarks/). To evaluate a ne
 steps apply: pull it, `agent -check` for `tools`, then `cmd/bench -models <name>`. A mixture-of-experts
 model can be worth measuring even when it's bigger than the card — see the decision for why.
 
-## 8. Freeing the GPU
+## 8. Run history
+
+Every `agent -research` run is stored with its tool calls in
+`~/.local/state/quantic-agent/agent.db` (override with `-db` or `QUANTIC_AGENT_DB`):
+
+```sh
+go run ./cmd/agent -runs        # the last 20 runs: state, number of tool calls, question
+go run ./cmd/agent -run 3       # one run: its calls, its answer, and a fresh provenance check
+```
+
+It's an ordinary SQLite file. Back it up by copying it while the agent isn't running (or with
+`sqlite3 agent.db ".backup copy.db"` while it is). The tables are described in
+[design §3.7](design.md#37-storage).
+
+## 9. Freeing the GPU
 
 The desktop is shared: sometimes something else needs most of the 16GB. From lightest to heaviest:
 
