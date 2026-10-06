@@ -205,4 +205,4 @@ took from it: a fake server should do what the real one does before it does what
 ---
 
 **Previous:** [Lesson 03 — Errors you can ask questions of](03-errors-you-can-ask-questions-of.md) ·
-**Next:** Lesson 05 — the first real tool *(not written yet)*
+**Next:** [Lesson 05 — The first real tool](05-the-first-real-tool.md)
