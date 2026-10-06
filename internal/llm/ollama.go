@@ -2,17 +2,26 @@
 //
 // The agent generates through Ollama (design §4): one HTTP call per
 // generation, never streamed, so a reply is one JSON object rather than a
-// sequence of them. Tool schemas arrive in milestone 5 and context deadlines
-// in milestone 4; this is the plain request/response floor underneath both.
+// sequence of them. Tool schemas arrive in milestone 5.
+//
+// Every call takes a context.Context, and the caller's context is the only
+// limit on how long a call may take: the client sets no timeout of its own.
+// Cancelling it ends the request, and Ollama then stops working on it too:
+// a cancelled generation frees the GPU within about a second. Cancelling
+// while a model is still loading aborts the load, so a deadline must allow
+// for a cold start.
 //
 // Failures come back as errors a caller can tell apart without reading their
 // text: ErrUnavailable when the server isn't there to answer, ErrModelNotFound
-// when it is but lacks the model, and *APIError for any other refusal. All of
-// them arrive wrapped, so test for them with errors.Is and errors.As.
+// when it is but lacks the model, *APIError for any other refusal, and the
+// context's own error (context.DeadlineExceeded or context.Canceled) when the
+// caller stopped waiting. All of them arrive wrapped, so test for them with
+// errors.Is and errors.As.
 package llm
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -89,9 +98,9 @@ func New(baseURL, model string) *Client {
 	return &Client{
 		baseURL: strings.TrimRight(baseURL, "/"),
 		model:   model,
-		// A blunt ceiling so a wedged server can't hang the agent forever.
-		// Milestone 4 replaces it with a per-call context deadline.
-		http: &http.Client{Timeout: 5 * time.Minute},
+		// No Timeout: how long a call may take is the caller's decision,
+		// carried by the context each method takes.
+		http: &http.Client{},
 	}
 }
 
@@ -167,7 +176,7 @@ type GenerateResponse struct {
 func (r GenerateResponse) Truncated() bool { return r.DoneReason == "length" }
 
 // Generate sends one prompt and returns the whole reply.
-func (c *Client) Generate(req GenerateRequest) (GenerateResponse, error) {
+func (c *Client) Generate(ctx context.Context, req GenerateRequest) (GenerateResponse, error) {
 	body := generateBody{
 		Model:   c.model,
 		Prompt:  req.Prompt,
@@ -177,7 +186,7 @@ func (c *Client) Generate(req GenerateRequest) (GenerateResponse, error) {
 	}
 
 	var out GenerateResponse
-	if err := c.post("/api/generate", body, &out); err != nil {
+	if err := c.post(ctx, "/api/generate", body, &out); err != nil {
 		return GenerateResponse{}, err
 	}
 	return out, nil
@@ -185,22 +194,22 @@ func (c *Client) Generate(req GenerateRequest) (GenerateResponse, error) {
 
 // Version reports the Ollama server's version, and doubles as a reachability
 // check that costs no GPU time.
-func (c *Client) Version() (string, error) {
+func (c *Client) Version(ctx context.Context) (string, error) {
 	var out struct {
 		Version string `json:"version"`
 	}
-	if err := c.get("/api/version", &out); err != nil {
+	if err := c.get(ctx, "/api/version", &out); err != nil {
 		return "", err
 	}
 	return out.Version, nil
 }
 
-func (c *Client) post(path string, in, out any) error {
+func (c *Client) post(ctx context.Context, path string, in, out any) error {
 	payload, err := json.Marshal(in)
 	if err != nil {
 		return fmt.Errorf("llm: encoding request for %s: %w", path, err)
 	}
-	req, err := http.NewRequest(http.MethodPost, c.baseURL+path, bytes.NewReader(payload))
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.baseURL+path, bytes.NewReader(payload))
 	if err != nil {
 		return fmt.Errorf("llm: building request for %s: %w", path, err)
 	}
@@ -208,8 +217,8 @@ func (c *Client) post(path string, in, out any) error {
 	return c.do(req, out)
 }
 
-func (c *Client) get(path string, out any) error {
-	req, err := http.NewRequest(http.MethodGet, c.baseURL+path, nil)
+func (c *Client) get(ctx context.Context, path string, out any) error {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.baseURL+path, nil)
 	if err != nil {
 		return fmt.Errorf("llm: building request for %s: %w", path, err)
 	}
@@ -219,6 +228,11 @@ func (c *Client) get(path string, out any) error {
 func (c *Client) do(req *http.Request, out any) error {
 	resp, err := c.http.Do(req)
 	if err != nil {
+		// Checked first: if the caller cancelled or ran out of time, that is
+		// the reason, whatever the connection reported as it was torn down.
+		if ctxErr := req.Context().Err(); ctxErr != nil {
+			return fmt.Errorf("llm: %s %s: %w", req.Method, req.URL.Path, ctxErr)
+		}
 		// Two %w verbs wrap both errors: callers can ask errors.Is about our
 		// sentinel and about the network error underneath it.
 		if unreachable(err) {
@@ -234,6 +248,10 @@ func (c *Client) do(req *http.Request, out any) error {
 		return apiError(req, resp)
 	}
 	if err := json.NewDecoder(resp.Body).Decode(out); err != nil {
+		// The context can also end while the body is still arriving.
+		if ctxErr := req.Context().Err(); ctxErr != nil {
+			return fmt.Errorf("llm: %s %s: %w", req.Method, req.URL.Path, ctxErr)
+		}
 		return fmt.Errorf("llm: decoding %s reply: %w", req.URL.Path, err)
 	}
 	return nil
@@ -246,8 +264,8 @@ func (c *Client) do(req *http.Request, out any) error {
 // connection and an unreachable host are the same situation seen from
 // elsewhere. A DNS failure is left out on purpose: an unknown host is far more
 // often a typo in OLLAMA_HOST than a machine that's off, and a typo should fail
-// loudly rather than be waited on. So is a timeout: a slow server is not a
-// missing one (milestone 4).
+// loudly rather than be waited on. A cancelled or expired context never gets
+// here: do reports it first, because a slow server is not a missing one.
 func unreachable(err error) bool {
 	// Checked first, so the rule is about the name failing to resolve and
 	// doesn't depend on what a *net.DNSError happens to wrap.
@@ -326,11 +344,11 @@ func (m Model) Supports(capability string) bool {
 // Models lists what this server has pulled. The agent is developed on one
 // machine and runs on another, so "what is actually on that box" has to be a
 // question the binary itself can answer.
-func (c *Client) Models() ([]Model, error) {
+func (c *Client) Models(ctx context.Context) ([]Model, error) {
 	var out struct {
 		Models []Model `json:"models"`
 	}
-	if err := c.get("/api/tags", &out); err != nil {
+	if err := c.get(ctx, "/api/tags", &out); err != nil {
 		return nil, err
 	}
 	return out.Models, nil
@@ -358,11 +376,11 @@ func (r RunningModel) OnGPU() float64 {
 }
 
 // Running lists what the server is holding in memory right now.
-func (c *Client) Running() ([]RunningModel, error) {
+func (c *Client) Running(ctx context.Context) ([]RunningModel, error) {
 	var out struct {
 		Models []RunningModel `json:"models"`
 	}
-	if err := c.get("/api/ps", &out); err != nil {
+	if err := c.get(ctx, "/api/ps", &out); err != nil {
 		return nil, err
 	}
 	return out.Models, nil

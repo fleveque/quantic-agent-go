@@ -2,10 +2,13 @@ package main
 
 import (
 	"bytes"
+	"context"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestRun(t *testing.T) {
@@ -46,7 +49,7 @@ func TestRun(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			var stdout, stderr bytes.Buffer
 
-			code := run(tt.args, &stdout, &stderr)
+			code := run(t.Context(), tt.args, &stdout, &stderr)
 
 			if code != tt.wantCode {
 				t.Errorf("exit code = %d, want %d", code, tt.wantCode)
@@ -72,7 +75,7 @@ func TestRunAsk(t *testing.T) {
 	t.Cleanup(srv.Close)
 
 	var stdout, stderr bytes.Buffer
-	code := run([]string{"-ollama", srv.URL, "-ask", "Reply with exactly: ok"}, &stdout, &stderr)
+	code := run(t.Context(), []string{"-ollama", srv.URL, "-ask", "Reply with exactly: ok"}, &stdout, &stderr)
 
 	if code != 0 {
 		t.Fatalf("exit code = %d, want 0 (stderr: %q)", code, stderr.String())
@@ -109,7 +112,7 @@ func TestRunCheck(t *testing.T) {
 	srv := checkServer(t)
 
 	var stdout, stderr bytes.Buffer
-	code := run([]string{"-ollama", srv.URL, "-model", "qwen3.5:9b", "-check"}, &stdout, &stderr)
+	code := run(t.Context(), []string{"-ollama", srv.URL, "-model", "qwen3.5:9b", "-check"}, &stdout, &stderr)
 
 	if code != 0 {
 		t.Fatalf("exit code = %d, want 0 (stderr: %q)", code, stderr.String())
@@ -126,7 +129,7 @@ func TestRunCheckFlagsAMissingModel(t *testing.T) {
 	srv := checkServer(t)
 
 	var stdout, stderr bytes.Buffer
-	code := run([]string{"-ollama", srv.URL, "-model", "not-pulled:latest", "-check"}, &stdout, &stderr)
+	code := run(t.Context(), []string{"-ollama", srv.URL, "-model", "not-pulled:latest", "-check"}, &stdout, &stderr)
 
 	// A model that was never pulled on the target machine has to fail here,
 	// not later in the middle of a task.
@@ -149,7 +152,7 @@ func TestRunReportsAnUnreachableServer(t *testing.T) {
 		{"-ollama", deadURL, "-check"},
 	} {
 		var stdout, stderr bytes.Buffer
-		code := run(args, &stdout, &stderr)
+		code := run(t.Context(), args, &stdout, &stderr)
 
 		// 3, not 1: nothing was attempted, so a scheduler can retry the run.
 		if code != 3 {
@@ -173,7 +176,7 @@ func TestRunAskReportsAMissingModel(t *testing.T) {
 	t.Cleanup(srv.Close)
 
 	var stdout, stderr bytes.Buffer
-	code := run([]string{"-ollama", srv.URL, "-model", "not-pulled:latest", "-ask", "hi"}, &stdout, &stderr)
+	code := run(t.Context(), []string{"-ollama", srv.URL, "-model", "not-pulled:latest", "-ask", "hi"}, &stdout, &stderr)
 
 	if code != 1 {
 		t.Errorf("exit code = %d, want 1", code)
@@ -190,7 +193,7 @@ func TestRunPointsAtTheServerLogOnAServerFailure(t *testing.T) {
 	t.Cleanup(srv.Close)
 
 	var stdout, stderr bytes.Buffer
-	code := run([]string{"-ollama", srv.URL, "-ask", "hi"}, &stdout, &stderr)
+	code := run(t.Context(), []string{"-ollama", srv.URL, "-ask", "hi"}, &stdout, &stderr)
 
 	if code != 1 {
 		t.Errorf("exit code = %d, want 1", code)
@@ -210,12 +213,55 @@ func TestRunCheckMatchesModelNamesCaseInsensitively(t *testing.T) {
 	srv := checkServer(t)
 
 	var stdout, stderr bytes.Buffer
-	code := run([]string{"-ollama", srv.URL, "-model", "QWEN3.5:9B", "-check"}, &stdout, &stderr)
+	code := run(t.Context(), []string{"-ollama", srv.URL, "-model", "QWEN3.5:9B", "-check"}, &stdout, &stderr)
 
 	if code != 0 {
 		t.Fatalf("exit code = %d, want 0 (stderr: %q)", code, stderr.String())
 	}
 	if got := stdout.String(); !strings.Contains(got, "* qwen3.5:9b") {
 		t.Errorf("stdout = %q, want the model marked as selected", got)
+	}
+}
+
+// slowServer reads each request and then never answers, like a server busy
+// loading a model. Each handler returns once its client hangs up.
+func slowServer(t *testing.T) *httptest.Server {
+	t.Helper()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		io.Copy(io.Discard, r.Body) // until the body is read, a hang-up goes unnoticed
+		<-r.Context().Done()
+	}))
+	t.Cleanup(srv.Close)
+	return srv
+}
+
+func TestRunGivesUpAtTheTimeout(t *testing.T) {
+	srv := slowServer(t)
+
+	var stdout, stderr bytes.Buffer
+	code := run(t.Context(), []string{"-ollama", srv.URL, "-timeout", "50ms", "-ask", "hi"}, &stdout, &stderr)
+
+	if code != 1 {
+		t.Errorf("exit code = %d, want 1", code)
+	}
+	if got := stderr.String(); !strings.Contains(got, "gave up after 50ms") {
+		t.Errorf("stderr = %q, want it to say how long it waited", got)
+	}
+}
+
+func TestRunStopsWhenInterrupted(t *testing.T) {
+	srv := slowServer(t)
+	// The context main gets from signal.NotifyContext, as it is after Ctrl-C.
+	ctx, cancel := context.WithCancel(t.Context())
+	time.AfterFunc(50*time.Millisecond, cancel)
+
+	var stdout, stderr bytes.Buffer
+	code := run(ctx, []string{"-ollama", srv.URL, "-ask", "hi"}, &stdout, &stderr)
+
+	if code != 130 {
+		t.Errorf("exit code = %d, want 130", code)
+	}
+	if got := stderr.String(); !strings.Contains(got, "stopped") {
+		t.Errorf("stderr = %q, want it to say the run was stopped", got)
 	}
 }
