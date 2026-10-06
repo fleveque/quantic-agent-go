@@ -15,12 +15,14 @@ learning record. Start with [README.md](README.md) and [docs/design.md](docs/des
   on task quality from milestone 5. Raw results in `docs/benchmarks/`.
 - Milestone 3 (errors across the LLM boundary): `llm.ErrUnavailable`, `llm.ErrModelNotFound` and
   `*llm.APIError`; `agent` exits 3 when the server isn't there. Lesson 03 and walkthrough 03.
+- Milestone 4 (timeouts and cancellation): every `llm` method takes a `context.Context`; `-timeout`
+  on both commands; Ctrl-C/`SIGTERM` cancel the request in flight (exit 130). Lesson 04 and
+  walkthrough 04.
 
 ## Next, in order
 
-1. **Milestone 4 — timeouts and cancellation**: `context` through `internal/llm`
-   (`http.NewRequestWithContext`), replacing the blunt 5-minute `http.Client.Timeout`; graceful
-   shutdown on `SIGTERM` (design §3.6). A timeout must stay distinct from `ErrUnavailable`.
+1. **Milestone 5 — first real tool, `dividend_calendar`, end to end**: schema from Go structs by
+   reflection, and MCP auth, which is design open question 1 and still unanswered. Start there.
 2. Milestone 5 must leave behind an evaluation set that runs against any model name (ADR 0005), the
    basis of the model-upkeep task (design §1, open question 10).
 
@@ -63,3 +65,5 @@ learning record. Start with [README.md](README.md) and [docs/design.md](docs/des
 - Model names resolve case-insensitively; compare with `strings.EqualFold`.
 - `hf.co/{user}/{repo}:{QUANT}` pulls any Hub GGUF. Per-model version floors are undocumented.
 - Error bodies are `{"error": ...}` JSON, except a bad path, which is plain text.
+- Cancelling a request mid-generation stops the GPU work within about a second; cancelling while a
+  model is loading aborts the load. Deadlines must allow for a cold start (up to ~31s measured).
