@@ -39,6 +39,12 @@ jobs:
       - name: Build
         run: go build ./...
 
+      # The design's reason for modernc.org/sqlite: a static binary with no C
+      # toolchain (design §3.7). Building with cgo switched off proves no
+      # dependency has quietly started needing it.
+      - name: Build without cgo
+        run: CGO_ENABLED=0 go build ./...
+
       # Go's closest equivalent to --warnings-as-errors. vet catches the
       # mistakes the compiler permits: bad Printf verbs, unused results of
       # pure functions, struct tags that don't parse.

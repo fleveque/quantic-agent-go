@@ -179,4 +179,4 @@ it's strict where it can be and honest about where it can't.
 ---
 
 **Previous:** [Lesson 05 — The first real tool](05-the-first-real-tool.md) ·
-**Next:** Lesson 07 — SQLite *(not written yet)*
+**Next:** [Lesson 07 — A memory that can be audited](07-a-memory-that-can-be-audited.md)

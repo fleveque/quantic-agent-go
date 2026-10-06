@@ -81,6 +81,12 @@ type Researcher struct {
 	Server   ToolServer
 	Tools    []tools.Tool // the allowlist: the only tools offered, and the only ones run
 	MaxCalls int          // 0 means DefaultMaxCalls
+
+	// Record, if set, is called after every tool call, successful or not,
+	// with its position in the run. It is how calls reach the audit log
+	// (design N3) as they happen. If it fails, the run stops: a call that
+	// can't be recorded is a call that can't be audited.
+	Record func(ctx context.Context, seq int, c Call) error
 }
 
 // Ask runs the loop for one question. A model mistake (an unknown tool,
@@ -120,6 +126,11 @@ func (r *Researcher) Ask(ctx context.Context, question string) (Answer, error) {
 			}
 			call, err := r.run(ctx, tc)
 			answer.Calls = append(answer.Calls, call)
+			if r.Record != nil {
+				if recErr := r.Record(ctx, len(answer.Calls)-1, call); recErr != nil {
+					return answer, fmt.Errorf("agent: recording call: %w", recErr)
+				}
+			}
 			if err != nil {
 				return answer, err
 			}

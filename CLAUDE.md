@@ -24,14 +24,18 @@ learning record. Start with [README.md](README.md) and [docs/design.md](docs/des
   `cmd/evaltools` (tool-call evaluation; results in `docs/benchmarks/`).
 - Milestone 6 (provenance): `internal/provenance` — `CheckData` (exact, field by field),
   `CheckProse` (figures in free text), `NoFigures`; `agent -research` exits 4 on unverified figures.
+- Milestone 7 (SQLite): `internal/store` (runs, tool_calls, drafts; embedded migrations);
+  `agent -runs`, `agent -run N` (re-checks provenance from stored calls). First external dependency:
+  `modernc.org/sqlite`; CI builds with `CGO_ENABLED=0`.
 
 ## Next, in order
 
-1. **Milestone 7 — SQLite**: runs, drafts and the tool-call audit log (design §3.7, N3) via
-   `modernc.org/sqlite` (pure Go, no cgo). Persist `agent.Answer.Calls`; the manifest is rebuilt
-   from them.
-2. Week Ahead data needs `get_stock` per company (amounts, yields) and pacing under the anonymous
-   rate limit of 60 requests/minute (ADR 0006).
+1. **Milestone 8 — the research loop**. First, replace the hand-written migrations in `internal/store`
+   with `pressly/goose` (design §3.7: the usual Go approach, after doing it by hand; down migrations,
+   cross-process locking), keeping `0001` and its tests. Lesson 08 compares the two. Then budgets for calls, wall-clock and tokens (design §3.2),
+   retries with backoff (a `429` from Quantic's anonymous rate limit, ADR 0006), and phases with
+   checkpoints in SQLite so an interrupted run resumes (design §3.6).
+2. Week Ahead data needs `get_stock` per company (amounts, yields).
 
 ## Conventions
 
@@ -59,7 +63,7 @@ learning record. Start with [README.md](README.md) and [docs/design.md](docs/des
 - **Models are used as published** (Ollama library or `hf.co` pulls). No hand-built variants via
   `ollama create`; new models arrive too often to maintain them.
 - **The GPU is shared with the author.** Anything long-running must stop cleanly and tolerate a stopped
-  Ollama (design §3.6, runbook §8).
+  Ollama (design §3.6, runbook §9).
 - The design's non-negotiables (design §2) — no invented numbers, no autonomous publishing — are not
   up for convenience trade-offs.
 

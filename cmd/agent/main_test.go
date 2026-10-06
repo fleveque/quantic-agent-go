@@ -16,6 +16,23 @@ import (
 	"time"
 )
 
+// TestMain runs before any test in the package. It points the default
+// database at a temporary directory, so no test can ever write to the
+// operator's real run history. (An early version of these tests did: the
+// research tests didn't pass -db, and left three fake runs in
+// ~/.local/state/quantic-agent.)
+func TestMain(m *testing.M) {
+	dir, err := os.MkdirTemp("", "quantic-agent-test-")
+	if err != nil {
+		panic(err)
+	}
+	os.Setenv("XDG_STATE_HOME", dir)
+	os.Unsetenv("QUANTIC_AGENT_DB")
+	code := m.Run()
+	os.RemoveAll(dir)
+	os.Exit(code)
+}
+
 func TestRun(t *testing.T) {
 	tests := []struct {
 		name       string
@@ -396,5 +413,63 @@ func TestRunResearchRejectsFiguresNoToolReturned(t *testing.T) {
 	// Dates the empty calendar does contain are still accounted for.
 	if strings.Contains(got, "October 6, 2026") {
 		t.Errorf("stderr = %q; 2026-10-06 is the calendar's own start date", got)
+	}
+}
+
+// A research run is stored as it happens; -runs lists it and -run re-checks
+// its answer against the stored tool results.
+func TestResearchIsRecordedAndCanBeRechecked(t *testing.T) {
+	ollama, quantic := fakeOllamaChat(t), fakeMCP(t, realCalendar(t))
+	db := filepath.Join(t.TempDir(), "agent.db")
+
+	var stdout, stderr bytes.Buffer
+	code := run(t.Context(), []string{"-db", db, "-ollama", ollama.URL, "-mcp", quantic.URL,
+		"-research", "Which companies go ex-dividend in the next 10 days?"}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("research exit %d: %s", code, stderr.String())
+	}
+	if !strings.Contains(stderr.String(), "agent: run 1 answered") {
+		t.Errorf("stderr = %q, want the run's id and outcome", stderr.String())
+	}
+
+	stdout.Reset()
+	if code := run(t.Context(), []string{"-db", db, "-runs"}, &stdout, &stderr); code != 0 {
+		t.Fatalf("-runs exit %d", code)
+	}
+	if got := stdout.String(); !strings.Contains(got, "answered") || !strings.Contains(got, "Which companies go ex-dividend") {
+		t.Errorf("-runs = %q, want the run listed", got)
+	}
+
+	stdout.Reset()
+	if code := run(t.Context(), []string{"-db", db, "-run", "1"}, &stdout, &stderr); code != 0 {
+		t.Fatalf("-run 1 exit %d: %s", code, stdout.String())
+	}
+	got := stdout.String()
+	for _, want := range []string{`call 0: dividend_calendar {"days":10}`, "Microsoft", "every figure traces to a stored tool result"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("-run 1 = %q, want it to contain %q", got, want)
+		}
+	}
+}
+
+// Ctrl-C mid-run: the context is cancelled, and the outcome must still be
+// saved, which is exactly the moment a cancelled context can't be used for it.
+func TestAnInterruptedRunIsRecorded(t *testing.T) {
+	quantic := fakeMCP(t, realCalendar(t))
+	ollama := slowServer(t)
+	db := filepath.Join(t.TempDir(), "agent.db")
+	ctx, cancel := context.WithCancel(t.Context())
+	time.AfterFunc(100*time.Millisecond, cancel)
+
+	var stdout, stderr bytes.Buffer
+	code := run(ctx, []string{"-db", db, "-ollama", ollama.URL, "-mcp", quantic.URL, "-research", "q"}, &stdout, &stderr)
+
+	if code != 130 {
+		t.Errorf("exit code = %d, want 130", code)
+	}
+	stdout.Reset()
+	run(t.Context(), []string{"-db", db, "-run", "1"}, &stdout, &stderr)
+	if got := stdout.String(); !strings.Contains(got, "run 1 · interrupted") || !strings.Contains(got, "context canceled") {
+		t.Errorf("-run 1 = %q, want the run saved as interrupted", got)
 	}
 }
