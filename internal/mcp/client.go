@@ -24,11 +24,13 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math/rand/v2"
 	"mime"
 	"net/http"
 	"strings"
 	"sync"
 	"sync/atomic"
+	"time"
 
 	"github.com/fleveque/quantic-agent/internal/netx"
 )
@@ -52,7 +54,40 @@ var (
 	// ErrUnauthorized means the server rejected the credentials: a token was
 	// sent and it isn't valid. Anonymous requests never get this.
 	ErrUnauthorized = errors.New("mcp server rejected the credentials")
+
+	// ErrRateLimited means the server kept answering 429 Too Many Requests
+	// until the client stopped retrying. Anonymous callers get 60 requests a
+	// minute per IP address (decision 0006).
+	ErrRateLimited = errors.New("mcp server rate limit reached")
 )
+
+// Backoff is how the client retries a request the server refused with 429.
+// The waits double from Base up to Max, each with jitter, for at most
+// Attempts tries in all.
+type Backoff struct {
+	Attempts int           // tries in all, the first included; 1 means never retry
+	Base     time.Duration // the first wait
+	Max      time.Duration // the longest single wait
+}
+
+// DefaultBackoff outlasts Quantic's rate limit. The server counts requests
+// in fixed one-minute windows and says nothing about when the window ends
+// (no Retry-After header), so a refused client may have to wait up to a
+// minute. With jitter, these waits add up to between 60.5 and 121 seconds:
+// even the shortest schedule outlasts a window.
+var DefaultBackoff = Backoff{Attempts: 9, Base: time.Second, Max: 30 * time.Second}
+
+// wait is the pause before retry number n (1 for the first retry). It is
+// "equal jitter": half the doubled wait, plus a random part of the other
+// half. Clients that were refused together don't all come back together,
+// and none comes back sooner than half the schedule.
+func (b Backoff) wait(n int) time.Duration {
+	d := b.Base << (n - 1)   // Base × 2ⁿ⁻¹
+	if d > b.Max || d <= 0 { // d <= 0: the shift overflowed
+		d = b.Max
+	}
+	return d/2 + rand.N(d/2+1)
+}
 
 // RPCError is a JSON-RPC error object: the server understood the request and
 // refused it at the protocol level, such as an unknown tool (-32602) or an
@@ -79,6 +114,14 @@ type Client struct {
 	token string
 	http  *http.Client
 
+	// Backoff is how a rate-limited request is retried: DefaultBackoff
+	// unless changed before the first request.
+	Backoff Backoff
+
+	// OnRetry, if set, is told about each retry before its wait, so the
+	// operator sees why a run has gone quiet.
+	OnRetry func(method string, retry int, wait time.Duration)
+
 	nextID atomic.Int64
 
 	mu        sync.Mutex
@@ -88,7 +131,7 @@ type Client struct {
 // New returns a client for the server at url. An empty token connects
 // anonymously.
 func New(url, token string) *Client {
-	return &Client{url: url, token: token, http: &http.Client{}}
+	return &Client{url: url, token: token, http: &http.Client{}, Backoff: DefaultBackoff}
 }
 
 // ServerInfo is what the server says about itself in the handshake.
@@ -207,14 +250,49 @@ func (c *Client) notify(ctx context.Context, method string) error {
 
 // send POSTs one message and, for a request, returns the reply whose id
 // matches wantID. For a notification (wantID 0) it returns an empty message.
+//
+// A 429 is retried after a pause (see Backoff). Every tool the agent may call
+// only reads, so sending the same request twice can't do anything twice.
+// Nothing else is retried: an unreachable server is the caller's to handle
+// (design §3.6), and any other failure won't fix itself in a few seconds.
 func (c *Client) send(ctx context.Context, msg message, wantID int64) (message, error) {
 	payload, err := json.Marshal(msg)
 	if err != nil {
 		return message{}, fmt.Errorf("mcp: encoding %s: %w", msg.Method, err)
 	}
+	attempts := max(c.Backoff.Attempts, 1)
+	for retry := 1; ; retry++ {
+		reply, err := c.sendOnce(ctx, msg.Method, payload, wantID)
+		if !errors.Is(err, errTooManyRequests) {
+			return reply, err
+		}
+		if retry == attempts {
+			return message{}, fmt.Errorf("mcp: %s: %w (%d attempts)", msg.Method, ErrRateLimited, attempts)
+		}
+		wait := c.Backoff.wait(retry)
+		if c.OnRetry != nil {
+			c.OnRetry(msg.Method, retry, wait)
+		}
+		// Waiting must not outlive the run: Ctrl-C or the deadline ends it.
+		timer := time.NewTimer(wait)
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			return message{}, fmt.Errorf("mcp: %s: waiting to retry: %w", msg.Method, ctx.Err())
+		case <-timer.C:
+		}
+	}
+}
+
+// errTooManyRequests is one 429 reply, which send retries. Callers only ever
+// see ErrRateLimited, once the retries are spent.
+var errTooManyRequests = errors.New("429 Too Many Requests")
+
+// sendOnce makes one HTTP request carrying payload.
+func (c *Client) sendOnce(ctx context.Context, method string, payload []byte, wantID int64) (message, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.url, bytes.NewReader(payload))
 	if err != nil {
-		return message{}, fmt.Errorf("mcp: building %s: %w", msg.Method, err)
+		return message{}, fmt.Errorf("mcp: building %s: %w", method, err)
 	}
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Accept", "application/json, text/event-stream")
@@ -231,12 +309,12 @@ func (c *Client) send(ctx context.Context, msg message, wantID int64) (message, 
 	resp, err := c.http.Do(req)
 	if err != nil {
 		if ctxErr := ctx.Err(); ctxErr != nil {
-			return message{}, fmt.Errorf("mcp: %s: %w", msg.Method, ctxErr)
+			return message{}, fmt.Errorf("mcp: %s: %w", method, ctxErr)
 		}
 		if netx.Unreachable(err) {
-			return message{}, fmt.Errorf("mcp: %s: %w: %w", msg.Method, ErrUnavailable, err)
+			return message{}, fmt.Errorf("mcp: %s: %w: %w", method, ErrUnavailable, err)
 		}
-		return message{}, fmt.Errorf("mcp: %s: %w", msg.Method, err)
+		return message{}, fmt.Errorf("mcp: %s: %w", method, err)
 	}
 	defer resp.Body.Close()
 
@@ -248,20 +326,25 @@ func (c *Client) send(ctx context.Context, msg message, wantID int64) (message, 
 
 	switch {
 	case resp.StatusCode == http.StatusUnauthorized:
-		return message{}, fmt.Errorf("mcp: %s: %w", msg.Method, ErrUnauthorized)
+		return message{}, fmt.Errorf("mcp: %s: %w", method, ErrUnauthorized)
+	case resp.StatusCode == http.StatusTooManyRequests:
+		// Read the short body to the end so the connection can be reused
+		// for the retry.
+		io.Copy(io.Discard, io.LimitReader(resp.Body, 4<<10))
+		return message{}, errTooManyRequests
 	case wantID == 0 && resp.StatusCode == http.StatusAccepted:
 		return message{}, nil // a notification, acknowledged
 	case resp.StatusCode != http.StatusOK:
 		body, _ := io.ReadAll(io.LimitReader(resp.Body, 4<<10))
-		return message{}, fmt.Errorf("mcp: %s: %s: %s", msg.Method, resp.Status, bytes.TrimSpace(body))
+		return message{}, fmt.Errorf("mcp: %s: %s: %s", method, resp.Status, bytes.TrimSpace(body))
 	}
 
 	reply, err := readReply(resp, wantID)
 	if err != nil {
 		if ctxErr := ctx.Err(); ctxErr != nil {
-			return message{}, fmt.Errorf("mcp: %s: %w", msg.Method, ctxErr)
+			return message{}, fmt.Errorf("mcp: %s: %w", method, ctxErr)
 		}
-		return message{}, fmt.Errorf("mcp: %s: %w", msg.Method, err)
+		return message{}, fmt.Errorf("mcp: %s: %w", method, err)
 	}
 	return reply, nil
 }
