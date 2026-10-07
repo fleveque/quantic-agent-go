@@ -35,15 +35,9 @@ learning record. Start with [README.md](README.md) and [docs/design.md](docs/des
 
 ## Next, in order
 
-1. **Findings from milestone 8's measurements** ([benchmarks](docs/benchmarks/2026-10-07-writer/README.md)),
-   before more content depends on the writer:
-   - Numbers in words escape the validator: "ten stocks" where the data has nine, "four months".
-     That's design N1. `internal/provenance` reads only digits.
-   - "October 16 and 17": the bare day after "and" is read as the number 17, not a date.
-   - The writer isn't told today's date and sometimes guesses wrong ("October 2023"). Telling it
-     means today's date has to be a source the manifest accepts.
-   - Research sometimes gathers nothing (no call, or only a refused one), and the run still ends
-     `answered` with a "no data" reply.
+1. **Research that gathers nothing** (no call, or only a refused one) still ends `answered` with a
+   "no data" reply ([benchmarks](docs/benchmarks/2026-10-07-writer/README.md)). The other findings
+   from milestone 8 are fixed: numbers in words, "October 16 and 17", and today's date.
 2. **Milestone 9 — the worker pool** (README roadmap): serialised GPU, parallel I/O. The Week Ahead
    needs `get_stock` per company (amounts, yields), 20–40 calls paced under Quantic's 60/min limit.
 3. `num_ctx` is still Ollama's default 4096 for chat; fine for one calendar, not for the Week Ahead's data.

@@ -13,6 +13,14 @@ calendar.
 | [Without the "don't derive figures" sentence](m8-writer-data-only-shorter-prompt.txt) | question and data | 7/9 | wrong counts in words in three answers ("six", "three", "five" companies; four listed); unsure what "this month" means twice; research ended with no data twice |
 | [Writer sees the research conversation](m8-writer-sees-research-conversation.txt) | the research messages, no tools | 6/9 | **buy-timing advice twice** ("you must purchase the stock before the ex-dividend date": design N5); "18 days"; research ended with no data once, and the answer suggested Bloomberg |
 
+**Follow-up, the same day:** the writer told today's date, and the validator reading numbers in words,
+with list lengths and the question's own figures as sources ([runs](m8-writer-with-todays-date-and-word-numbers.txt)):
+**7/9** traced. Every answer worked from 2026-10-07; none guessed a year. The two flagged answers
+were caught by the new checks: "9 days away" (derived), and "four" and "two" companies, right but
+counts of a filtered subset, which no list length accounts for. Not caught, because no figure is
+invented: one answer put Apple, 9 days out, outside a 10-day window. One run's research made no call
+at all and still ended answered.
+
 Tokens per run (both phases): 1,827–3,500, median about 2,000. The default token budget, 16,000,
 is about five times that.
 

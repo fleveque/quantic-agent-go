@@ -158,8 +158,12 @@ numbers (currency, percent, thousands separators), dates (ISO, "Oct 8", "8 Octob
 years, and reports any the manifest lacks. Matching is exact: a rounded, converted or derived figure is
 reported. The false positives above are handled by rule: digits inside words (`Q3`, `W38`) and list
 positions at a line start aren't claims, and a bare year counts if a returned date falls in it. Known
-limits, acceptable because post prose must have no figures at all (`NoFigures`): numbers written as
-words aren't seen, and only English number formats are parsed. In real runs, five of six research
+limits, acceptable because post prose must have no figures at all (`NoFigures`): only English number
+formats are parsed. *(Updated after milestone 8: numbers written as words, two to ninety-nine, are
+figures too, and "October 16 and 17" reads as two dates. Besides returned values, the manifest
+accepts each list's length, so "nine stocks" checks against a nine-item calendar, and the figures of
+the question and of the date the run started, which the writer is told; see the
+[measurement](benchmarks/2026-10-07-writer/README.md).)* In real runs, five of six research
 answers traced fully; the sixth said "the next 4 months", a figure the model derived itself, which is
 exactly what N1 forbids.
 

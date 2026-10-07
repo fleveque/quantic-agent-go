@@ -93,7 +93,9 @@ func research(ctx context.Context, stdout, stderr io.Writer, cfg researchConfig)
 		}
 	}
 
-	w := &agent.Writer{Model: cfg.model}
+	// "Today" is the day the run started, when its data was fetched, even
+	// for a run resumed later: the answer describes that data.
+	w := &agent.Writer{Model: cfg.model, Today: run.StartedAt.Local()}
 	draft, err := w.Write(ctx, run.Input, gathered)
 	tokens := gathered.Tokens + draft.Tokens
 	if err != nil {
@@ -104,7 +106,7 @@ func research(ctx context.Context, stdout, stderr io.Writer, cfg researchConfig)
 	if draft.Truncated {
 		fmt.Fprintln(stderr, "agent: the answer was truncated: the model hit its token limit")
 	}
-	findings, err := check(draft.Text, gathered.Calls)
+	findings, err := check(run, draft.Text, gathered.Calls)
 	if err != nil {
 		return stopped(err, tokens)
 	}
@@ -136,7 +138,7 @@ func startOrResume(ctx context.Context, stderr io.Writer, cfg researchConfig) (s
 	if err != nil {
 		return store.Run{}, err
 	}
-	return store.Run{ID: id, Input: cfg.question, Phase: store.PhaseResearch}, nil
+	return store.Run{ID: id, Input: cfg.question, Phase: store.PhaseResearch, StartedAt: time.Now()}, nil
 }
 
 // researchPhase lets the model call Quantic's tools, recording each call as
@@ -176,8 +178,10 @@ func outcome(err error) store.State {
 }
 
 // check verifies every figure in text against the successful calls' results
-// (design N1).
-func check(text string, calls []agent.Call) ([]provenance.Finding, error) {
+// (design N1). The run's question and the date it started count as sources
+// too: repeating the question's "six months", or the date the writer was
+// told is today, invents nothing.
+func check(run store.Run, text string, calls []agent.Call) ([]provenance.Finding, error) {
 	var records []provenance.Record
 	for _, c := range calls {
 		if !c.Failed {
@@ -188,6 +192,8 @@ func check(text string, calls []agent.Call) ([]provenance.Finding, error) {
 	if err != nil {
 		return nil, err
 	}
+	m.AddText("question", run.Input)
+	m.AddText("today", run.StartedAt.Local().Format(time.DateOnly))
 	return provenance.CheckProse(text, m), nil
 }
 
@@ -241,7 +247,7 @@ func showRun(ctx context.Context, stdout, stderr io.Writer, db *store.Store, id 
 	}
 	fmt.Fprintf(stdout, "\n%s\n\n", r.Draft.Content)
 
-	findings, err := check(r.Draft.Content, r.Calls)
+	findings, err := check(r, r.Draft.Content, r.Calls)
 	if err != nil {
 		fmt.Fprintln(stderr, "agent:", err)
 		return exitFailed

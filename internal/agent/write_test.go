@@ -5,6 +5,7 @@ import (
 	"errors"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/fleveque/quantic-agent/internal/agent"
 	"github.com/fleveque/quantic-agent/internal/llm"
@@ -17,7 +18,8 @@ func TestTheWriterSeesTheDataAndNoTools(t *testing.T) {
 	}}
 	model := &scriptedModel{script: []llm.Message{says("MSFT goes ex-dividend on 8 October.")}, tokens: 900}
 
-	draft, err := (&agent.Writer{Model: model}).Write(t.Context(), "What goes ex-dividend soon?", research)
+	today := time.Date(2026, 10, 7, 9, 0, 0, 0, time.Local)
+	draft, err := (&agent.Writer{Model: model, Today: today}).Write(t.Context(), "What goes ex-dividend soon?", research)
 
 	if err != nil {
 		t.Fatal(err)
@@ -30,7 +32,7 @@ func TestTheWriterSeesTheDataAndNoTools(t *testing.T) {
 		t.Errorf("the writer was offered %d tools, want none", len(req.Tools))
 	}
 	prompt := req.Messages[1].Content
-	for _, want := range []string{"Question: What goes ex-dividend soon?", `Data from dividend_calendar {"days":10}:`, calendar} {
+	for _, want := range []string{"Today's date: 2026-10-07", "Question: What goes ex-dividend soon?", `Data from dividend_calendar {"days":10}:`, calendar} {
 		if !strings.Contains(prompt, want) {
 			t.Errorf("prompt lacks %q:\n%s", want, prompt)
 		}
@@ -42,8 +44,11 @@ func TestTheWriterSeesTheDataAndNoTools(t *testing.T) {
 }
 
 func TestTheWriterIsToldWhenResearchStoppedEarly(t *testing.T) {
-	prompt := agent.WriteRequest("q", agent.Research{Exhausted: agent.LimitTokens}).Messages[1].Content
+	prompt := agent.WriteRequest("q", time.Time{}, agent.Research{Exhausted: agent.LimitTokens}).Messages[1].Content
 
+	if strings.Contains(prompt, "Today") {
+		t.Errorf("a zero Today still put a date in the prompt:\n%s", prompt)
+	}
 	for _, want := range []string{"No data was retrieved.", "its tokens budget ran out", "may be incomplete"} {
 		if !strings.Contains(prompt, want) {
 			t.Errorf("prompt lacks %q:\n%s", want, prompt)
