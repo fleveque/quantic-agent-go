@@ -1,3 +1,5 @@
+-- +goose Up
+
 -- A run is one task the agent attempted: for now, one -research question.
 CREATE TABLE runs (
     id          INTEGER PRIMARY KEY,
@@ -35,3 +37,9 @@ CREATE TABLE drafts (
     findings    TEXT    NOT NULL,                 -- JSON array: figures no tool call accounts for
     created_at  TEXT    NOT NULL
 );
+
+-- +goose Down
+-- In reverse order: a table goes after the ones that reference it.
+DROP TABLE drafts;
+DROP TABLE tool_calls;
+DROP TABLE runs;
