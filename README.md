@@ -1,4 +1,10 @@
-# quantic-agent
+# quantic-agent-go
+
+> **Deprecated.** This Go version is finished and archived. The agent continues in Python at
+> **[fleveque/quantic-agent](https://github.com/fleveque/quantic-agent)**, with the same goals,
+> design and way of working. Why: [decision 0007](docs/decisions/0007-continue-in-python.md). The
+> lessons below stay as the record of learning Go; the Go learning itself continues in
+> [quantic-cli](https://github.com/fleveque/quantic-cli).
 
 A local, autonomous content and QA agent for [Quantic](https://quantic.finance), written in Go.
 
