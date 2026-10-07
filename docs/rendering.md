@@ -76,7 +76,7 @@ data:
 
 ## What to watch
 
-Three consumer-staples names go ex-dividend in the same week for the first time this
+Several consumer-staples names go ex-dividend in the same week for the first time this
 quarter, and the REIT cohort keeps its recent pattern of monthly payers holding steady
 while quarterly payers drift.
 ```
@@ -174,7 +174,8 @@ positives on years and list positions.
 This makes the prose rule enforceable and cheap: **prose must contain no figures at all.** The
 validator asserts zero unaccounted numerics in the body, and every figure is checked structurally.
 A model that writes "yields rose about 40 basis points" in the body fails validation and gets sent
-back.
+back. Numbers in words are figures too: "three names" is a count nothing in the prose can verify,
+exactly like "3 names". A count worth stating goes in the data block.
 
 ### 2. Locale number formatting disappears
 

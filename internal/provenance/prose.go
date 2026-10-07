@@ -59,10 +59,11 @@ func (f figure) value() string {
 // for. An empty result means every figure traces to a tool result.
 //
 // It recognises numbers (with thousands separators, a currency symbol or a
-// percent sign), dates (2026-10-08, "Oct 8", "October 8, 2026", "8 October")
-// and bare years. Figures written as words ("five companies") are not seen;
-// the post format makes that moot, since its prose may hold no figures at all
-// (see NoFigures).
+// percent sign), numbers written as words from two to ninety-nine ("nine
+// stocks", "six-month"), dates (2026-10-08, "Oct 8", "October 8, 2026",
+// "8 October", and the second day in "October 16 and 17") and bare years.
+// "One" is left out: it is far more often a pronoun ("one of them") than a
+// figure.
 func CheckProse(text string, m *Manifest) []Finding {
 	var out []Finding
 	for _, f := range figures(text) {
@@ -110,10 +111,26 @@ var (
 	monthDay   = regexp.MustCompile(`(?i)\b(` + monthNames + `)\.?\s+(\d{1,2})(?:st|nd|rd|th)?\b(?:,?\s+(\d{4})\b)?`)
 	dayMonth   = regexp.MustCompile(`(?i)\b(\d{1,2})(?:st|nd|rd|th)?\s+(` + monthNames + `)\b\.?(?:,?\s+(\d{4})\b)?`)
 
+	// "October 16 and 17", "Oct 16 & 17", "16 and 17 October": a second day
+	// sharing the month. Found before the single-day forms, which would
+	// otherwise take the first day and leave the second as a bare number.
+	monthDayPair = regexp.MustCompile(`(?i)\b(` + monthNames + `)\.?\s+(\d{1,2})(?:st|nd|rd|th)?\s*(?:and|&|or)\s*(\d{1,2})(?:st|nd|rd|th)?\b(?:,?\s+(\d{4})\b)?`)
+	dayPairMonth = regexp.MustCompile(`(?i)\b(\d{1,2})(?:st|nd|rd|th)?\s*(?:and|&|or)\s*(\d{1,2})(?:st|nd|rd|th)?\s+(` + monthNames + `)\b\.?(?:,?\s+(\d{4})\b)?`)
+
 	// A number: an optional sign and currency symbol, digits with or without
 	// thousands separators, an optional decimal part and percent sign.
 	number = regexp.MustCompile(`-?[$€£]?(?:\d{1,3}(?:,\d{3})+|\d+)(?:\.\d+)?%?`)
+
+	// A number in words: "twenty-one" before "twenty", so the compound wins.
+	wordNumber = regexp.MustCompile(`(?i)\b(?:(twenty|thirty|forty|fifty|sixty|seventy|eighty|ninety)[- ](one|two|three|four|five|six|seven|eight|nine)|(two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|thirteen|fourteen|fifteen|sixteen|seventeen|eighteen|nineteen|twenty|thirty|forty|fifty|sixty|seventy|eighty|ninety))\b`)
 )
+
+var wordValues = map[string]int{
+	"one": 1, "two": 2, "three": 3, "four": 4, "five": 5, "six": 6, "seven": 7, "eight": 8, "nine": 9,
+	"ten": 10, "eleven": 11, "twelve": 12, "thirteen": 13, "fourteen": 14, "fifteen": 15,
+	"sixteen": 16, "seventeen": 17, "eighteen": 18, "nineteen": 19,
+	"twenty": 20, "thirty": 30, "forty": 40, "fifty": 50, "sixty": 60, "seventy": 70, "eighty": 80, "ninety": 90,
+}
 
 // figures finds every figure in text, in order. Dates are found first and
 // blanked out, so the "8" in "Oct 8" isn't also read as a number.
@@ -130,6 +147,26 @@ func figures(text string) []figure {
 		y, mo, d := atoi(text, loc, 2), atoi(text, loc, 4), atoi(text, loc, 6)
 		out = append(out, figure{text: text[loc[0]:loc[1]], offset: loc[0], kind: KindDate, year: y, month: mo, day: d})
 		blank(loc[0], loc[1])
+	}
+	for _, re := range []*regexp.Regexp{monthDayPair, dayPairMonth} {
+		for _, loc := range re.FindAllStringSubmatchIndex(string(masked), -1) {
+			s := string(masked)
+			var mo, d1, d2 int
+			if re == monthDayPair {
+				mo, d1, d2 = monthNumber(s[loc[2]:loc[3]]), atoi(s, loc, 4), atoi(s, loc, 6)
+			} else {
+				d1, d2, mo = atoi(s, loc, 2), atoi(s, loc, 4), monthNumber(s[loc[6]:loc[7]])
+			}
+			y := 0
+			if loc[8] >= 0 {
+				y = atoi(s, loc, 8)
+			}
+			// Two figures, one per day, both reported with the whole phrase.
+			for _, d := range []int{d1, d2} {
+				out = append(out, figure{text: text[loc[0]:loc[1]], offset: loc[0], kind: KindDate, year: y, month: mo, day: d})
+			}
+			blank(loc[0], loc[1])
+		}
 	}
 	for _, re := range []*regexp.Regexp{monthDay, dayMonth} {
 		for _, loc := range re.FindAllStringSubmatchIndex(string(masked), -1) {
@@ -169,7 +206,17 @@ func figures(text string) []figure {
 		out = append(out, f)
 	}
 
-	slices.SortFunc(out, func(a, b figure) int { return cmp.Compare(a.offset, b.offset) })
+	for _, loc := range wordNumber.FindAllStringSubmatchIndex(s, -1) {
+		var n int
+		if loc[2] >= 0 {
+			n = wordValues[strings.ToLower(s[loc[2]:loc[3]])] + wordValues[strings.ToLower(s[loc[4]:loc[5]])]
+		} else {
+			n = wordValues[strings.ToLower(s[loc[6]:loc[7]])]
+		}
+		out = append(out, figure{text: text[loc[0]:loc[1]], offset: loc[0], kind: KindNumber, number: float64(n)})
+	}
+
+	slices.SortStableFunc(out, func(a, b figure) int { return cmp.Compare(a.offset, b.offset) })
 	return out
 }
 

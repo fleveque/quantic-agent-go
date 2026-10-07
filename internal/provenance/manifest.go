@@ -15,7 +15,10 @@
 // Matching is exact. A figure the model rounded, converted or calculated is
 // not the figure a tool returned, so it is reported: derived figures must come
 // from the calculator tools, where they enter the manifest like any other
-// result.
+// result. Two things count as returned besides the values themselves: the
+// length of every list in a result (so "nine stocks" is checked against a
+// nine-item calendar), and the figures of text added with AddText, such as
+// the question being answered.
 package provenance
 
 import (
@@ -34,14 +37,21 @@ type Record struct {
 }
 
 // Source says where in the manifest a value was found: the call's position in
-// the run, the tool, and the value's path inside that call's result.
+// the run, the tool, and the value's path inside that call's result. A source
+// added with AddText has Call -1, its label as Tool, and the figure as written
+// as Path.
 type Source struct {
 	Call int
 	Tool string
 	Path string
 }
 
-func (s Source) String() string { return fmt.Sprintf("%s#%d %s", s.Tool, s.Call, s.Path) }
+func (s Source) String() string {
+	if s.Call < 0 { // added with AddText: no call, the text it came from
+		return fmt.Sprintf("%s: %q", s.Tool, s.Path)
+	}
+	return fmt.Sprintf("%s#%d %s", s.Tool, s.Call, s.Path)
+}
 
 // Manifest indexes every number, date and string a run's tools returned.
 type Manifest struct {
@@ -79,6 +89,9 @@ func (m *Manifest) index(v any, at Source) {
 			m.dates[v] = append(m.dates[v], at)
 		}
 	case []any:
+		// How many items a list has is part of what the tool returned.
+		length := Source{Call: at.Call, Tool: at.Tool, Path: "len(" + at.Path + ")"}
+		m.numbers[float64(len(v))] = append(m.numbers[float64(len(v))], length)
 		for i, item := range v {
 			m.index(item, at.child(fmt.Sprintf("[%d]", i)))
 		}
@@ -88,6 +101,25 @@ func (m *Manifest) index(v any, at Source) {
 		}
 	}
 	// Booleans and nulls carry no figures.
+}
+
+// AddText adds the figures written in text as a source, labelled source: the
+// question being answered ("the next six months"), or today's date. They
+// aren't data, but repeating them isn't inventing anything. Dates without a
+// year are left out, since they name no particular day.
+func (m *Manifest) AddText(source, text string) {
+	for _, f := range figures(text) {
+		at := Source{Call: -1, Tool: source, Path: f.text}
+		switch {
+		case f.kind == KindDate && f.year != 0:
+			d := f.value()
+			m.dates[d] = append(m.dates[d], at)
+		case f.kind == KindYear:
+			m.numbers[float64(f.year)] = append(m.numbers[float64(f.year)], at)
+		case f.kind == KindNumber:
+			m.numbers[f.number] = append(m.numbers[f.number], at)
+		}
+	}
 }
 
 func (s Source) child(step string) Source {

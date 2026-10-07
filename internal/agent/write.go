@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/fleveque/quantic-agent/internal/llm"
 )
@@ -24,6 +25,11 @@ var ErrNothingWritten = errors.New("agent: the model wrote nothing")
 // Writer runs the writing phase: one model call, no tools.
 type Writer struct {
 	Model Model
+
+	// Today is the date the research was done, which the writer is told:
+	// left to itself, it guesses (one answer worked from "October 2023").
+	// The zero value tells it nothing.
+	Today time.Time
 }
 
 // Draft is what the writing phase produced.
@@ -35,7 +41,7 @@ type Draft struct {
 
 // Write answers question from what research gathered.
 func (w *Writer) Write(ctx context.Context, question string, research Research) (Draft, error) {
-	resp, err := w.Model.Chat(ctx, WriteRequest(question, research))
+	resp, err := w.Model.Chat(ctx, WriteRequest(question, w.Today, research))
 	if err != nil {
 		return Draft{}, err
 	}
@@ -51,12 +57,15 @@ func (w *Writer) Write(ctx context.Context, question string, research Research) 
 }
 
 // WriteRequest is the writer's whole view of the world: the standing
-// instruction, the question, and each successful call's result labelled with
-// the call that produced it. Failed calls are left out: they are errors the
+// instruction, today's date, the question, and each successful call's result
+// labelled with the call that produced it. Failed calls are left out: they are errors the
 // research model was shown, not data. Exported so the prompt can be
 // inspected exactly as the model gets it.
-func WriteRequest(question string, research Research) llm.ChatRequest {
+func WriteRequest(question string, today time.Time, research Research) llm.ChatRequest {
 	var b strings.Builder
+	if !today.IsZero() {
+		fmt.Fprintf(&b, "Today's date: %s\n\n", today.Format(time.DateOnly))
+	}
 	fmt.Fprintf(&b, "Question: %s\n\n", question)
 	n := 0
 	for _, c := range research.Calls {

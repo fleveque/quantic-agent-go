@@ -72,7 +72,19 @@ func TestCheckProse(t *testing.T) {
 		{"full date", cal, "on October 8, 2026", nil},
 		{"day before month", cal, "on 8 October 2026", nil},
 		{"ordinal day", cal, "on October 16th", nil},
-		{"the day's number isn't checked twice", cal, "Oct 21 brings two", nil},
+		{"the day's number isn't checked twice", cal, "Oct 21 is busy", nil},
+		{"a second day sharing the month", cal, "on October 16 and 17", nil},
+		{"a second day that wasn't returned", cal, "on October 17 and 18", []string{"October 17 and 18"}},
+		{"a day pair before the month", cal, "on 16 & 17 October", nil},
+
+		// Numbers in words are figures too. A list's length counts as
+		// returned: the calendar has ten stocks.
+		{"a count that matches the list", cal, "ten stocks go ex-dividend", nil},
+		{"a count that doesn't", cal, "eleven stocks go ex-dividend", []string{"eleven"}},
+		{"a derived duration in words", cal, "about four months", []string{"four"}},
+		{"a compound number", quote, "twenty-one days", []string{"twenty-one"}},
+		{"a word number as an adjective", cal, "a six-month window", []string{"six"}},
+		{"one is a pronoun, not a figure", cal, "one of them pays monthly", nil},
 
 		{"year of a returned date", cal, "the 2026 calendar", nil},
 		{"year with no returned date", cal, "by 2027", []string{"2027"}},
@@ -156,7 +168,9 @@ func TestNoFigures(t *testing.T) {
 		want []string
 	}{
 		// The example docs/rendering.md gives of prose a post may contain...
-		{"Three consumer-staples names go ex-dividend in the same week for the first time this quarter.", nil},
+		{"Several consumer-staples names go ex-dividend in the same week for the first time this quarter.", nil},
+		// ...a count in words, which nothing in a post's prose can verify...
+		{"Three consumer-staples names go ex-dividend in the same week.", []string{"Three"}},
 		// ...and of prose it may not.
 		{"Yields rose about 40 basis points.", []string{"40"}},
 		{"Microsoft goes ex-dividend on Oct 8.", []string{"Oct 8"}},
@@ -240,5 +254,31 @@ func TestResultsMustBeJSON(t *testing.T) {
 	_, err := provenance.NewManifest(provenance.Record{Tool: "calc", Result: "3.3 percent"})
 	if err == nil || !strings.Contains(err.Error(), "not JSON") {
 		t.Errorf("err = %v, want a non-JSON result refused", err)
+	}
+}
+
+// Figures from text added as a source, such as the question, are accounted
+// for; ones it doesn't contain are still reported.
+func TestTextAsASource(t *testing.T) {
+	m := calendar120(t)
+	m.AddText("question", "Which stocks go ex-dividend in the next six months?")
+	m.AddText("today", "Today is 2026-10-07.")
+
+	got := texts(provenance.CheckProse("Over the next six months (from 2026-10-07): about four months of data.", m))
+
+	if !slices.Equal(got, []string{"four"}) {
+		t.Errorf("findings = %q, want only the derived \"four\"", got)
+	}
+	if src := m.Number(6); len(src) != 1 || src[0].String() != `question: "six"` {
+		t.Errorf("sources of 6 = %v, want the question", src)
+	}
+}
+
+// A list's length is recorded with the list's path.
+func TestListLengthsAreSources(t *testing.T) {
+	m := manifest(t, `{"stocks":[{"symbol":"O"},{"symbol":"MSFT"}]}`)
+
+	if src := m.Number(2); len(src) != 1 || src[0].Path != "len($.stocks)" {
+		t.Errorf("sources of 2 = %v, want len($.stocks)", src)
 	}
 }
