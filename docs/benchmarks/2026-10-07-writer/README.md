@@ -19,7 +19,7 @@ with list lengths and the question's own figures as sources ([runs](m8-writer-wi
 were caught by the new checks: "9 days away" (derived), and "four" and "two" companies, right but
 counts of a filtered subset, which no list length accounts for. Not caught, because no figure is
 invented: one answer put Apple, 9 days out, outside a 10-day window. One run's research made no call
-at all and still ended answered.
+at all and still ended answered; such a run now ends `no_data` (exit 5) without writing.
 
 Tokens per run (both phases): 1,827–3,500, median about 2,000. The default token budget, 16,000,
 is about five times that.

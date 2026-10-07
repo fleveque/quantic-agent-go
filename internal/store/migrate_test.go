@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/fleveque/quantic-agent/internal/agent"
 	"github.com/pressly/goose/v3"
 )
 
@@ -144,5 +145,83 @@ func TestPhasesAreAddedToExistingRuns(t *testing.T) {
 	}
 	if len(runs) != 2 || runs[1].Phase != PhaseDone || runs[0].Phase != PhaseResearch {
 		t.Errorf("runs = %+v, want the answered run done and the failed one in research", runs)
+	}
+}
+
+// 0003 rebuilds runs with foreign keys switched off for its connection. The
+// rows that reference runs must survive, still valid, and every connection
+// in the pool, including the one goose migrated with, must enforce foreign
+// keys again afterwards.
+func TestRebuildingRunsKeepsItsReferences(t *testing.T) {
+	s := openForTest(t, filepath.Join(t.TempDir(), "agent.db"))
+	ctx := t.Context()
+	dir, _ := fs.Sub(migrations, "migrations")
+	p, err := goose.NewProvider(goose.DialectSQLite3, s.db, dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := p.DownTo(ctx, 2); err != nil {
+		t.Fatal(err)
+	}
+	id, _ := s.StartRun(ctx, "research", "q", "m")
+	s.RecordCall(ctx, id, 0, agent.Call{Tool: "dividend_calendar", Arguments: []byte(`{}`), Result: `{}`})
+	s.Finish(ctx, id, Outcome{State: StateAnswered, Draft: &Draft{Content: "kept"}})
+
+	if _, err := p.Up(ctx); err != nil {
+		t.Fatal(err)
+	}
+
+	run, err := s.Run(ctx, id)
+	if err != nil || len(run.Calls) != 1 || run.Draft == nil || run.Draft.Content != "kept" {
+		t.Errorf("run after the rebuild = %+v, %v", run, err)
+	}
+	rows, err := s.db.QueryContext(ctx, `PRAGMA foreign_key_check`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rows.Next() {
+		t.Error("foreign_key_check found rows pointing at no run")
+	}
+	rows.Close()
+
+	// Hold several connections at once, so the pool has to hand out every
+	// idle one it has, and ask each.
+	var conns []*sql.Conn
+	for range 4 {
+		c, err := s.db.Conn(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer c.Close()
+		conns = append(conns, c)
+	}
+	for i, c := range conns {
+		var on bool
+		if err := c.QueryRowContext(ctx, `PRAGMA foreign_keys`).Scan(&on); err != nil || !on {
+			t.Errorf("connection %d: foreign_keys = %v, %v; want on", i, on, err)
+		}
+	}
+}
+
+// Going down from 0003 can't keep no_data, which the old CHECK refuses: those
+// runs become failed, as they would have been.
+func TestNoDataGoesBackToFailed(t *testing.T) {
+	s := openForTest(t, filepath.Join(t.TempDir(), "agent.db"))
+	ctx := t.Context()
+	id, _ := s.StartRun(ctx, "research", "q", "m")
+	if err := s.Finish(ctx, id, Outcome{State: StateNoData}); err != nil {
+		t.Fatal(err)
+	}
+	dir, _ := fs.Sub(migrations, "migrations")
+	p, _ := goose.NewProvider(goose.DialectSQLite3, s.db, dir)
+
+	if _, err := p.DownTo(ctx, 2); err != nil {
+		t.Fatal(err)
+	}
+
+	var state, why string
+	s.db.QueryRowContext(ctx, `SELECT state, error FROM runs WHERE id = ?`, id).Scan(&state, &why)
+	if state != "failed" || why != "research gathered no data" {
+		t.Errorf("state %q, error %q; want failed, research gathered no data", state, why)
 	}
 }

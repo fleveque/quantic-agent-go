@@ -31,16 +31,15 @@ learning record. Start with [README.md](README.md) and [docs/design.md](docs/des
   take turns (goose has no SQLite lock); research and writing as separate phases, the writer with no
   tools; call and token budgets; `429` retried with backoff in `internal/mcp`; checkpoints between
   phases and `agent -resume N`. The writer measured against milestone 7's single loop:
-  `docs/benchmarks/2026-10-07-writer/`.
+  `docs/benchmarks/2026-10-07-writer/`. Follow-ups: numbers in words are figures (list lengths, the
+  question and the run's date count as sources); the writer is told the date; research with no data
+  ends `no_data` (exit 5) without writing.
 
 ## Next, in order
 
-1. **Research that gathers nothing** (no call, or only a refused one) still ends `answered` with a
-   "no data" reply ([benchmarks](docs/benchmarks/2026-10-07-writer/README.md)). The other findings
-   from milestone 8 are fixed: numbers in words, "October 16 and 17", and today's date.
-2. **Milestone 9 — the worker pool** (README roadmap): serialised GPU, parallel I/O. The Week Ahead
+1. **Milestone 9 — the worker pool** (README roadmap): serialised GPU, parallel I/O. The Week Ahead
    needs `get_stock` per company (amounts, yields), 20–40 calls paced under Quantic's 60/min limit.
-3. `num_ctx` is still Ollama's default 4096 for chat; fine for one calendar, not for the Week Ahead's data.
+2. `num_ctx` is still Ollama's default 4096 for chat; fine for one calendar, not for the Week Ahead's data.
 
 ## Conventions
 

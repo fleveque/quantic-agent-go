@@ -579,3 +579,43 @@ func TestAnAnsweredRunCantBeResumed(t *testing.T) {
 		t.Errorf("exit %d, stderr %q; want 1 and a reason", code, stderr.String())
 	}
 }
+
+// A model that answers without calling a tool gathered nothing: the run ends
+// no_data, exit 5, without asking the model to write, and can be resumed.
+func TestResearchWithNoDataIsNotAnAnswer(t *testing.T) {
+	db := filepath.Join(t.TempDir(), "agent.db")
+	var asked atomic.Int32
+	answers := fakeOllamaReplies(t, "chat-tool-answer.json") // a reply with no tool call
+	counting := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		asked.Add(1)
+		resp, err := http.Post(answers.URL+r.URL.Path, "application/json", r.Body)
+		if err != nil {
+			t.Error(err)
+			return
+		}
+		defer resp.Body.Close()
+		io.Copy(w, resp.Body)
+	}))
+	t.Cleanup(counting.Close)
+
+	var stdout, stderr bytes.Buffer
+	code := run(t.Context(), []string{"-db", db, "-ollama", counting.URL, "-mcp", fakeMCP(t, realCalendar(t)).URL,
+		"-research", "Which companies go ex-dividend in the next 10 days?"}, &stdout, &stderr)
+
+	if code != 5 {
+		t.Fatalf("exit %d, want 5: %s", code, stderr.String())
+	}
+	if asked.Load() != 1 || stdout.Len() != 0 {
+		t.Errorf("model asked %d times, stdout %q; want research only, and no answer", asked.Load(), stdout.String())
+	}
+	if got := stderr.String(); !strings.Contains(got, "run 1 no_data") || !strings.Contains(got, "agent -resume 1") {
+		t.Errorf("stderr = %q, want the run saved as no_data, resumable", got)
+	}
+
+	stderr.Reset()
+	code = run(t.Context(), []string{"-db", db, "-ollama", fakeOllamaChat(t).URL, "-mcp", fakeMCP(t, realCalendar(t)).URL,
+		"-resume", "1"}, &stdout, &stderr)
+	if code != 0 || !strings.Contains(stderr.String(), "run 1 answered") {
+		t.Errorf("resume exit %d: %s", code, stderr.String())
+	}
+}
