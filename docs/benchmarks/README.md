@@ -10,6 +10,7 @@ in the [runbook](../target-machine.md#5-run-the-benchmark).
 | [`2026-09-26-moe-vs-dense.json`](2026-09-26-moe-vs-dense.json) | `qwen3.6:35b` (MoE) vs `qwen3.6:27b` (dense) at 8K, 32K | f16 KV cache |
 | [`2026-10-06-toolcalls-description-only.json`](2026-10-06-toolcalls-description-only.json) | `cmd/evaltools`: tool choice and arguments, 8 cases × 5 runs, three models | The 120-day limit stated only in the tool description |
 | [`2026-10-06-toolcalls-schema-maximum.json`](2026-10-06-toolcalls-schema-maximum.json) | The same evaluation, rerun | The limit also in the schema (`maximum: 120`) and enforced by the agent |
+| [`2026-10-07-writer/`](2026-10-07-writer/README.md) | `agent -research` end to end: milestone 7's single loop against three versions of milestone 8's writing phase, 9 runs each | `qwen3.5:9b`, live quantic.finance data |
 
 Common to both: RTX 4070 Ti Super 16GB (driver 610.57.04), Ryzen 7 7800X3D, 64GB RAM, Ollama 0.34.4,
 flash attention on, one parallel slot. The desktop was in normal use, holding about 1.2GB of VRAM

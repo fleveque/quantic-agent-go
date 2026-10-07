@@ -214,4 +214,4 @@ what makes an answer auditable after the fact.
 ---
 
 **Previous:** [Lesson 06 — Every figure has a source](06-every-figure-has-a-source.md) ·
-**Next:** Lesson 08 — the research loop *(not written yet)*
+**Next:** [Lesson 08 — A loop that can stop](08-a-loop-that-can-stop.md)

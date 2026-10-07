@@ -7,10 +7,12 @@ pulls **real financial data** from Quantic's MCP server, and turns it into draft
 reports and small code changes — delivered as **pull requests and review-queue entries, never as
 anything published automatically**.
 
-> **Status: milestone 7.** The agent calls real tools, checks its own answers and remembers what it
-> did: `agent -research` lets the local model ask Quantic's MCP server for data, verifies that every
-> figure in the answer traces to a tool result, and records the run and every tool call in SQLite.
-> `agent -run N` re-checks any past answer against exactly the data it was given. `agent -check` reports the model server and its models, every call has a deadline, and
+> **Status: milestone 8.** The agent calls real tools, checks its own answers and remembers what it
+> did: `agent -research` lets the local model ask Quantic's MCP server for data within a budget, then
+> writes the answer in a separate step that can't call tools, verifies that every figure in it traces
+> to a tool result, and records the run and every tool call in SQLite. `agent -run N` re-checks any
+> past answer against exactly the data it was given, and `agent -resume N` carries on a run that was
+> stopped. `agent -check` reports the model server and its models, every call has a deadline, and
 > Ctrl-C or a service stop cancels the request in flight. `cmd/evaltools` measures how well each model
 > picks and calls tools. No scheduled tasks yet. Slow on purpose —
 > the project doubles as my way of learning Go in public, so the commit history *is* the learning record.
@@ -201,8 +203,8 @@ the point is learning Go, not just having an agent.
 | 4 | Timeouts and cancellation for slow generations | `context`, deadlines, graceful shutdown |
 | 5 | First real tool: `dividend_calendar` end to end | schema from structs, reflection, MCP auth |
 | 6 | Provenance validator + table-driven tests | slices/maps, `testing`, `httptest`, fakes |
-| 7 | SQLite: runs, drafts, audit log *(you are here)* | `database/sql`, migrations, transactions |
-| 8 | **The agentic research loop** — dispatch, budgets, retries | state machines, backoff, `context` in a loop |
+| 7 | SQLite: runs, drafts, audit log | `database/sql`, migrations, transactions |
+| 8 | **The agentic research loop** — dispatch, budgets, retries *(you are here)* | state machines, backoff, `context` in a loop |
 | 9 | Worker pool: serialised GPU, parallel I/O | goroutines, channels, `sync`, `errgroup`, semaphores |
 | 10 | **Retrieval**: embeddings, brute-force cosine, style memory | `[]float32` math, `testing.B`, BLOBs |
 | 11 | Week Ahead end to end, 7 locales, translation validator | time, `embed`, YAML marshalling, struct tags |
@@ -228,6 +230,7 @@ go run ./cmd/agent -ask "say hello"    # one prompt, one reply
 go run ./cmd/agent -research "What goes ex-dividend this week?"   # model + Quantic tools
 go run ./cmd/agent -runs                # recent runs, from the SQLite history
 go run ./cmd/agent -run 3               # one run's tool calls and answer, re-checked
+go run ./cmd/agent -resume 3            # carry on a run that was stopped before answering
 go run ./cmd/bench                     # tokens/second and GPU residency per model
 go run ./cmd/evaltools                 # how reliably each model calls tools
 ```

@@ -255,13 +255,12 @@ func TestARunStopsIfACallCantBeRecorded(t *testing.T) {
 // An interrupted run resumes: its recorded calls are replayed to the model,
 // not made again, and they count against the budget.
 func TestResearchResumesFromRecordedCalls(t *testing.T) {
-	prior := agent.Research{
-		Calls: []agent.Call{
-			{Tool: "get_weather", Arguments: json.RawMessage(`{}`), Result: "error: no such tool", Failed: true},
-			{Tool: "dividend_calendar", Arguments: json.RawMessage(`{"days":10}`), Result: calendar},
-		},
-		Tokens: 1500,
-	}
+	// Spare capacity, as a slice built by append usually has: room for
+	// Research to write into, if it appended to this slice instead of a copy.
+	calls := make([]agent.Call, 2, 8)
+	calls[0] = agent.Call{Tool: "get_weather", Arguments: json.RawMessage(`{}`), Result: "error: no such tool", Failed: true}
+	calls[1] = agent.Call{Tool: "dividend_calendar", Arguments: json.RawMessage(`{"days":10}`), Result: calendar}
+	prior := agent.Research{Calls: calls, Tokens: 1500}
 	model := &scriptedModel{script: []llm.Message{asks("dividend_calendar", `{"days":30}`), says("done")}, tokens: 1000}
 	server := &fakeServer{results: map[string]mcp.Result{"dividend_calendar": {Text: calendar}}}
 	r := newResearcher(model, server)
@@ -291,9 +290,10 @@ func TestResearchResumesFromRecordedCalls(t *testing.T) {
 	if len(first) != 6 || first[3].Content != "error: no such tool" || first[4].ToolCalls[0].Function.Name != "dividend_calendar" || first[5].Content != calendar {
 		t.Errorf("replayed history = %+v", first)
 	}
-	// The caller's record of the old calls is left as it was.
-	if len(prior.Calls) != 2 {
-		t.Errorf("prior.Calls grew to %d", len(prior.Calls))
+	// The caller's slice is left as it was, including the memory past its
+	// length that shares its backing array.
+	if spare := prior.Calls[:3][2]; spare.Tool != "" {
+		t.Errorf("Research wrote %s into the caller's backing array", spare.Tool)
 	}
 }
 

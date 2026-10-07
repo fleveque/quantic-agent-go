@@ -137,9 +137,14 @@ Every `agent -research` run is stored with its tool calls in
 `~/.local/state/quantic-agent/agent.db` (override with `-db` or `QUANTIC_AGENT_DB`):
 
 ```sh
-go run ./cmd/agent -runs        # the last 20 runs: state, number of tool calls, question
+go run ./cmd/agent -runs        # the last 20 runs: state, phase, tool calls, tokens, question
 go run ./cmd/agent -run 3       # one run: its calls, its answer, and a fresh provenance check
+go run ./cmd/agent -resume 3    # carry on a run that was stopped or failed before answering
 ```
+
+A run stopped by Ctrl-C or `SIGTERM` (exit 130), or one that couldn't reach Ollama or Quantic (exit 3),
+keeps everything it did. `-resume` continues it from its phase with the model it started with: a run
+stopped while writing calls no tool again. An answered run can't be resumed; ask again instead.
 
 It's an ordinary SQLite file. Back it up by copying it while the agent isn't running (or with
 `sqlite3 agent.db ".backup copy.db"` while it is). The tables are described in
@@ -166,8 +171,8 @@ The agent is a one-shot command for now, so there is nothing to stop. Once it ru
 (milestone 13) it gets its own unit, and the design requires that stopping it loses no work and that a
 stopped Ollama makes it wait rather than fail ([design §3.6](design.md#36-concurrency-model)).
 Parts of that already exist. With Ollama stopped, `agent` exits with status 3 ("no model server
-answering"), which means nothing was attempted and the same command can be rerun later. Ctrl-C or
-`SIGTERM` cancels the request in flight and exits with 130; Ollama stops working on a cancelled
+answering"), and `agent -resume N` carries the run on once it's back (section 8). Ctrl-C or
+`SIGTERM` cancels the request in flight and exits with 130, saving the run so it can be resumed; Ollama stops working on a cancelled
 generation within about a second, so stopping the agent is enough to free the GPU. Cancelling while a
 model is still *loading* aborts the load, so the next request starts it again from zero.
 
@@ -193,7 +198,8 @@ this on a trusted LAN, ideally with a firewall rule limiting port 11434 to the l
 |---|---|---|
 | `412: requires a newer version of Ollama` on pull | Ollama too old for that model | Upgrade (section 1) |
 | `X is not on this server` | Model not pulled | `ollama list`, then `ollama pull X` |
-| `no model server answering at …`, exit status 3 | Ollama stopped, restarting, or on another host that's off | `systemctl status ollama`; start it (section 8). Nothing was attempted, so rerunning is safe |
+| `no model server answering at …`, exit status 3 | Ollama stopped, restarting, or on another host that's off | `systemctl status ollama`; start it (section 9), then `agent -resume N` with the run number it printed |
+| `Quantic's rate limit; retry …` lines, then possibly exit status 3 | More than 60 anonymous MCP requests a minute from this IP address, from the agent or anything else on it | The agent waits it out by itself (up to about two minutes). If it still gave up, `agent -resume N` later |
 | `the model server failed; its log has the cause` | Ollama answered 5xx, e.g. a model it couldn't load | `journalctl -u ollama -e` |
 | `figure(s) in the answer came from no tool result`, exit status 4 | `-research` answer contains a number or date no tool returned: invented, rounded, or derived by the model (e.g. "4 months" from 120 days) | Working as intended (design N1). The answer is shown so you can see it, but it isn't trustworthy |
 | `gave up after 5m0s (-timeout)` | The request took longer than `-timeout`: a slow model at a long context, or a stuck server | Raise `-timeout`, or check `ollama ps` for a model that spilled into system RAM. Too short a timeout during a cold load aborts the load |
