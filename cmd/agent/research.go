@@ -85,6 +85,14 @@ func research(ctx context.Context, stdout, stderr io.Writer, cfg researchConfig)
 		if err != nil {
 			return stopped(err, gathered.Tokens)
 		}
+		if !gathered.HasData() {
+			// Nothing to write from: no successful call. Writing anyway
+			// produced "no data was retrieved" answers that counted as
+			// answered. The run stays in research, so resuming tries again.
+			fmt.Fprintln(stderr, "agent: research gathered no data (no tool call succeeded); nothing to write from")
+			finish(store.Outcome{State: store.StateNoData, Err: errNoData, Tokens: gathered.Tokens})
+			return exitNoData
+		}
 		if gathered.Exhausted != "" {
 			fmt.Fprintf(stderr, "agent: research stopped when its %s budget ran out; writing from what it gathered\n", gathered.Exhausted)
 		}
@@ -119,6 +127,9 @@ func research(ctx context.Context, stdout, stderr io.Writer, cfg researchConfig)
 	finish(store.Outcome{State: store.StateAnswered, Draft: saved, Tokens: tokens})
 	return exitOK
 }
+
+// errNoData is why a no_data run stopped, as stored with it.
+var errNoData = errors.New("research gathered no data")
 
 // startOrResume records a new run, or claims the one being resumed.
 func startOrResume(ctx context.Context, stderr io.Writer, cfg researchConfig) (store.Run, error) {

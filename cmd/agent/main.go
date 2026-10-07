@@ -12,8 +12,8 @@
 // Exit status: 0 success, 1 failure (including -timeout running out), 2 wrong
 // usage, 3 a server wasn't there to answer (or Quantic's rate limit didn't
 // clear), 4 a -research answer contains figures no tool returned (design N1),
-// 130 stopped by Ctrl-C or SIGTERM. After 3 or 130, -resume continues the run
-// (design §3.6). On 130 the request in flight was cancelled, and Ollama stops
+// 5 research gathered no data, so nothing was written, 130 stopped by Ctrl-C
+// or SIGTERM. After 3, 5 or 130, -resume continues the run (design §3.6). On 130 the request in flight was cancelled, and Ollama stops
 // working on it too.
 package main
 
@@ -53,6 +53,7 @@ const (
 	exitUsage       = 2
 	exitUnavailable = 3
 	exitUnverified  = 4
+	exitNoData      = 5
 	exitInterrupted = 130 // 128 + SIGINT, the shell's convention for Ctrl-C
 )
 

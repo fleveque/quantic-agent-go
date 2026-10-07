@@ -90,6 +90,14 @@ type Research struct {
 	Exhausted Limit // "" when the model finished on its own
 }
 
+// HasData reports whether research gathered anything to write from: at
+// least one call that succeeded. A model that answered without calling a
+// tool, or whose every call was refused, gathered nothing, and writing would
+// only produce an answer about nothing.
+func (r Research) HasData() bool {
+	return slices.ContainsFunc(r.Calls, func(c Call) bool { return !c.Failed })
+}
+
 // Researcher runs the research phase with a model and a tool server.
 type Researcher struct {
 	Model  Model

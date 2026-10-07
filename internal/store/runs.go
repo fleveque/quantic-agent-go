@@ -22,6 +22,7 @@ const (
 	StateUnverified  State = "unverified"  // answered, with figures no tool returned
 	StateFailed      State = "failed"      // stopped by an error
 	StateInterrupted State = "interrupted" // stopped by Ctrl-C or SIGTERM
+	StateNoData      State = "no_data"     // research gathered nothing to write from
 )
 
 // Phase is how far a run has got (design §3.1). A run is saved at the end of
@@ -154,20 +155,21 @@ func (s *Store) Finish(ctx context.Context, runID int64, o Outcome) error {
 	})
 }
 
-// Resume claims a run that was interrupted or failed before answering, and
+// Resume claims a run that was interrupted, failed, or found no data before
+// answering, and
 // marks it running again, then returns it with its calls. The claim is one
 // UPDATE that only matches a resumable run, so if two processes try to
 // resume the same run at once, exactly one gets it.
 func (s *Store) Resume(ctx context.Context, runID int64) (Run, error) {
 	res, err := s.db.ExecContext(ctx,
 		`UPDATE runs SET state = ?, error = NULL, finished_at = NULL
-		 WHERE id = ? AND state IN (?, ?) AND phase != ?`,
-		StateRunning, runID, StateInterrupted, StateFailed, PhaseDone)
+		 WHERE id = ? AND state IN (?, ?, ?) AND phase != ?`,
+		StateRunning, runID, StateInterrupted, StateFailed, StateNoData, PhaseDone)
 	if err != nil {
 		return Run{}, fmt.Errorf("store: resuming run %d: %w", runID, err)
 	}
 	if n, _ := res.RowsAffected(); n != 1 {
-		return Run{}, fmt.Errorf("store: run %d: %w (only an interrupted or failed run without an answer can be)", runID, ErrNotResumable)
+		return Run{}, fmt.Errorf("store: run %d: %w (only an interrupted, failed or no-data run without an answer can be)", runID, ErrNotResumable)
 	}
 	return s.Run(ctx, runID)
 }

@@ -324,3 +324,21 @@ func TestResumingWithTheTokensSpent(t *testing.T) {
 		t.Errorf("got %+v, %v after %d model calls; want tokens exhausted and no call", got, err, len(model.seen))
 	}
 }
+
+func TestHasData(t *testing.T) {
+	ok := agent.Call{Tool: "dividend_calendar", Result: calendar}
+	refused := agent.Call{Tool: "dividend_calendar", Result: "error: days is 180", Failed: true}
+	for _, tt := range []struct {
+		name  string
+		calls []agent.Call
+		want  bool
+	}{
+		{"no call", nil, false},
+		{"only refused calls", []agent.Call{refused, refused}, false},
+		{"one success among refusals", []agent.Call{refused, ok}, true},
+	} {
+		if got := (agent.Research{Calls: tt.calls}).HasData(); got != tt.want {
+			t.Errorf("%s: HasData = %v, want %v", tt.name, got, tt.want)
+		}
+	}
+}

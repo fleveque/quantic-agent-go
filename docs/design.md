@@ -271,7 +271,10 @@ The interesting shape: **one GPU, many network calls.**
   as the conversation so far, and carries on within what's left of its budget. Claiming a run to
   resume is one conditional `UPDATE`, so two resumes of the same run can't both get it. Quantic's
   `429` is retried in `internal/mcp` with exponential backoff and jitter, long enough to outlast its
-  one-minute window, then reported as `mcp.ErrRateLimited` (exit 3, resumable). There is no
+  one-minute window, then reported as `mcp.ErrRateLimited` (exit 3, resumable). Research with no
+  successful call skips writing and ends `no_data` (exit 5, resumable): an answer about nothing isn't
+  an answer. Adding that state rebuilt `runs` (migration `0003`), with foreign keys off for that one
+  connection, as SQLite's own recipe requires. There is no
   scheduler yet: resuming is a command, not automatic.
 
 ### 3.7 Storage

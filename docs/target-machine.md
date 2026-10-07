@@ -142,8 +142,8 @@ go run ./cmd/agent -run 3       # one run: its calls, its answer, and a fresh pr
 go run ./cmd/agent -resume 3    # carry on a run that was stopped or failed before answering
 ```
 
-A run stopped by Ctrl-C or `SIGTERM` (exit 130), or one that couldn't reach Ollama or Quantic (exit 3),
-keeps everything it did. `-resume` continues it from its phase with the model it started with: a run
+A run stopped by Ctrl-C or `SIGTERM` (exit 130), one that couldn't reach Ollama or Quantic (exit 3),
+or one whose research gathered no data (exit 5) keeps everything it did. `-resume` continues it from its phase with the model it started with: a run
 stopped while writing calls no tool again. An answered run can't be resumed; ask again instead.
 
 It's an ordinary SQLite file. Back it up by copying it while the agent isn't running (or with
@@ -199,6 +199,7 @@ this on a trusted LAN, ideally with a firewall rule limiting port 11434 to the l
 | `412: requires a newer version of Ollama` on pull | Ollama too old for that model | Upgrade (section 1) |
 | `X is not on this server` | Model not pulled | `ollama list`, then `ollama pull X` |
 | `no model server answering at …`, exit status 3 | Ollama stopped, restarting, or on another host that's off | `systemctl status ollama`; start it (section 9), then `agent -resume N` with the run number it printed |
+| `research gathered no data`, exit status 5 | The model answered without calling a tool, or every call it made was refused. Nothing was written | `agent -resume N` to try the research again; if it keeps happening for a question, the question may not fit the tools |
 | `Quantic's rate limit; retry …` lines, then possibly exit status 3 | More than 60 anonymous MCP requests a minute from this IP address, from the agent or anything else on it | The agent waits it out by itself (up to about two minutes). If it still gave up, `agent -resume N` later |
 | `the model server failed; its log has the cause` | Ollama answered 5xx, e.g. a model it couldn't load | `journalctl -u ollama -e` |
 | `figure(s) in the answer came from no tool result`, exit status 4 | `-research` answer contains a number or date no tool returned: invented, rounded, or derived by the model (e.g. "4 months" from 120 days) | Working as intended (design N1). The answer is shown so you can see it, but it isn't trustworthy |
