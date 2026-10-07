@@ -13,11 +13,10 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
-	"sort"
-	"strconv"
-	"strings"
 	"time"
 
+	"github.com/pressly/goose/v3"
+	"github.com/pressly/goose/v3/database"
 	_ "modernc.org/sqlite" // registers the "sqlite" driver with database/sql
 )
 
@@ -49,7 +48,7 @@ func Open(ctx context.Context, path string) (*Store, error) {
 		return nil, fmt.Errorf("store: opening %s: %w", path, err)
 	}
 	s := &Store{db: db, now: time.Now}
-	if err := s.migrate(ctx); err != nil {
+	if err := s.migrate(ctx, path+".lock"); err != nil {
 		db.Close()
 		return nil, err
 	}
@@ -59,51 +58,85 @@ func Open(ctx context.Context, path string) (*Store, error) {
 // Close closes the database.
 func (s *Store) Close() error { return s.db.Close() }
 
-// migrate applies every embedded migration the database hasn't seen, in
-// order, each in its own transaction: a migration either applies completely
-// and is recorded, or doesn't apply at all.
-func (s *Store) migrate(ctx context.Context) error {
-	if _, err := s.db.ExecContext(ctx, `CREATE TABLE IF NOT EXISTS schema_migrations (
-		version    INTEGER PRIMARY KEY,
-		applied_at TEXT NOT NULL
-	)`); err != nil {
-		return fmt.Errorf("store: creating schema_migrations: %w", err)
-	}
-
-	files, err := fs.Glob(migrations, "migrations/*.sql")
+// migrate brings the schema up to date with goose, which applies every
+// embedded migration the database hasn't seen, in order, each in its own
+// transaction, and records it in goose_db_version. One process migrates at a
+// time (see lockFile); the others wait, then find nothing left to do.
+func (s *Store) migrate(ctx context.Context, lockPath string) error {
+	unlock, err := lockFile(ctx, lockPath)
 	if err != nil {
 		return err
 	}
-	sort.Strings(files) // 0001_..., 0002_...: the names are the order
+	defer unlock()
 
-	for _, file := range files {
-		version, err := strconv.Atoi(strings.SplitN(strings.TrimPrefix(file, "migrations/"), "_", 2)[0])
-		if err != nil {
-			return fmt.Errorf("store: migration %s has no version number: %w", file, err)
-		}
-		var applied bool
-		err = s.db.QueryRowContext(ctx, `SELECT EXISTS (SELECT 1 FROM schema_migrations WHERE version = ?)`, version).Scan(&applied)
-		if err != nil {
-			return fmt.Errorf("store: checking migration %d: %w", version, err)
-		}
-		if applied {
-			continue
-		}
+	if err := s.adopt(ctx); err != nil {
+		return err
+	}
 
-		body, err := migrations.ReadFile(file)
+	dir, err := fs.Sub(migrations, "migrations")
+	if err != nil {
+		return err
+	}
+	p, err := goose.NewProvider(goose.DialectSQLite3, s.db, dir)
+	if err != nil {
+		return fmt.Errorf("store: preparing migrations: %w", err)
+	}
+	if _, err := p.Up(ctx); err != nil {
+		return fmt.Errorf("store: migrating: %w", err)
+	}
+	return nil
+}
+
+// adopt hands a database migrated by milestone 7's hand-written code over to
+// goose. Those databases record applied versions in schema_migrations, which
+// goose doesn't read: left alone, goose would see version 0 and run 0001
+// again, failing on "table runs already exists". So, once, in one
+// transaction: create goose's version table, copy the versions across, and
+// drop the old table. A database without schema_migrations is left alone.
+func (s *Store) adopt(ctx context.Context) error {
+	var legacy bool
+	err := s.db.QueryRowContext(ctx,
+		`SELECT EXISTS (SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'schema_migrations')`).Scan(&legacy)
+	if err != nil || !legacy {
+		return err
+	}
+	versions, err := database.NewStore(database.DialectSQLite3, goose.DefaultTablename)
+	if err != nil {
+		return err
+	}
+	err = s.inTx(ctx, func(tx *sql.Tx) error {
+		rows, err := tx.QueryContext(ctx, `SELECT version FROM schema_migrations ORDER BY version`)
 		if err != nil {
 			return err
 		}
-		err = s.inTx(ctx, func(tx *sql.Tx) error {
-			if _, err := tx.ExecContext(ctx, string(body)); err != nil {
+		var applied []int64
+		for rows.Next() {
+			var v int64
+			if err := rows.Scan(&v); err != nil {
+				rows.Close()
 				return err
 			}
-			_, err := tx.ExecContext(ctx, `INSERT INTO schema_migrations (version, applied_at) VALUES (?, ?)`, version, s.stamp())
-			return err
-		})
-		if err != nil {
-			return fmt.Errorf("store: applying migration %s: %w", file, err)
+			applied = append(applied, v)
 		}
+		rows.Close()
+		if err := rows.Err(); err != nil {
+			return err
+		}
+
+		if err := versions.CreateVersionTable(ctx, tx); err != nil {
+			return err
+		}
+		// Version 0 is the row goose writes when it creates the table.
+		for _, v := range append([]int64{0}, applied...) {
+			if err := versions.Insert(ctx, tx, database.InsertRequest{Version: v}); err != nil {
+				return err
+			}
+		}
+		_, err = tx.ExecContext(ctx, `DROP TABLE schema_migrations`)
+		return err
+	})
+	if err != nil {
+		return fmt.Errorf("store: handing schema_migrations over to goose: %w", err)
 	}
 	return nil
 }

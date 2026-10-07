@@ -51,7 +51,9 @@ already what an anonymous caller gets. And it's enforced by the server, not by t
   same address. The Week Ahead needs the calendar plus one `get_stock` per company, often 20–40 calls.
   The research loop's call budget (design §3.2) must stay under it, or pace its calls. Hitting the
   limit is a `429`; the client treats it as a failure today, and milestone 8 should retry it after a
-  pause.
+  pause. *(Done in milestone 8: the server counts in fixed one-minute windows and sends no
+  `Retry-After`, so the client backs off exponentially, with jitter, for at least 60.5s in all before
+  reporting `mcp.ErrRateLimited`.)*
 - **The calendar has no amounts or yields.** `dividend_calendar` returns name, symbol, sector,
   ex-date and frequency. The Week Ahead table's amount and yield columns
   ([content plan](../content.md)) come from `get_stock`, one call per company.

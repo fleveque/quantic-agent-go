@@ -2,17 +2,19 @@
 //
 // It still has no scheduled tasks. What it can do so far: -check reports the
 // model server and its models, -ask sends one prompt and prints the reply,
-// and -research answers a question with Quantic's tools, printing each tool
-// call it made to stderr. Every research run is stored, with its tool calls,
-// in a SQLite database: -runs lists them, -run N shows one and re-checks its
-// answer against the data it was given.
+// and -research answers a question in two phases: research, where the model
+// calls Quantic's tools (each call printed to stderr), then writing, where it
+// answers from what they returned and nothing else. Every research run is
+// stored, with its tool calls, in a SQLite database: -runs lists them, -run N
+// shows one and re-checks its answer against the data it was given, and
+// -resume N picks up a run that was stopped, from the phase it had reached.
 //
 // Exit status: 0 success, 1 failure (including -timeout running out), 2 wrong
-// usage, 3 the model server wasn't there to answer, 4 a -research answer
-// contains figures no tool returned (design N1), 130 stopped by Ctrl-C or
-// SIGTERM. 3 means nothing was attempted, so a scheduler can simply run the
-// same command again later (design §3.6). On 130 the request in flight was
-// cancelled, and Ollama stops working on it too.
+// usage, 3 a server wasn't there to answer (or Quantic's rate limit didn't
+// clear), 4 a -research answer contains figures no tool returned (design N1),
+// 130 stopped by Ctrl-C or SIGTERM. After 3 or 130, -resume continues the run
+// (design §3.6). On 130 the request in flight was cancelled, and Ollama stops
+// working on it too.
 package main
 
 import (
@@ -85,6 +87,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	check := fs.Bool("check", false, "report the model server's version and exit")
 	ask := fs.String("ask", "", "send one prompt to the model and print the reply")
 	question := fs.String("research", "", "answer a question using Quantic's tools")
+	resumeID := fs.Int64("resume", 0, "resume run N, stopped or failed before answering, with the model it started with")
 	mcpURL := fs.String("mcp", envOr("QUANTIC_MCP_URL", mcp.DefaultURL), "Quantic MCP server URL")
 	dbPath := fs.String("db", envOr("QUANTIC_AGENT_DB", defaultDBPath()), "the agent's database of runs and tool calls")
 	listRuns := fs.Bool("runs", false, "list recent runs")
@@ -168,6 +171,23 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 			model: client, mcpURL: *mcpURL, store: db, question: *question, fail: fail,
 		})
 
+	case *resumeID != 0:
+		db, err := openStore(ctx, *dbPath)
+		if err != nil {
+			return fail(err)
+		}
+		defer db.Close()
+		// The run goes on with the model it started with, which is the
+		// one its record names. Resume (in research) is what claims it.
+		prev, err := db.Run(ctx, *resumeID)
+		if err != nil {
+			return fail(err)
+		}
+		client = llm.New(*baseURL, prev.Model)
+		return research(ctx, stdout, stderr, researchConfig{
+			model: client, mcpURL: *mcpURL, store: db, resume: *resumeID, fail: fail,
+		})
+
 	case *listRuns:
 		db, err := openStore(ctx, *dbPath)
 		if err != nil {
@@ -219,9 +239,10 @@ func report(stderr io.Writer, err error, baseURL, mcpURL, model string, timeout 
 		fmt.Fprintln(stderr, "agent: the MCP server rejected QUANTIC_MCP_TOKEN. Unset it to connect anonymously, or create a new token.")
 		return exitFailed
 
-	case errors.Is(err, agent.ErrTooManyCalls):
-		fmt.Fprintln(stderr, "agent: the model kept asking for tools and never answered:", err)
-		return exitFailed
+	case errors.Is(err, mcp.ErrRateLimited):
+		fmt.Fprintln(stderr, "agent: Quantic's rate limit didn't clear; resume the run later.")
+		fmt.Fprintln(stderr, "agent:", err)
+		return exitUnavailable
 
 	case errors.Is(err, llm.ErrUnavailable):
 		fmt.Fprintf(stderr, "agent: no model server answering at %s. Is Ollama running?\n", baseURL)

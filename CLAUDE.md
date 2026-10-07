@@ -4,7 +4,7 @@ A local Go agent that drafts data-grounded content for Quantic using a local mod
 It doubles as the author's way of learning Go in public: the commit history and `docs/lessons` are the
 learning record. Start with [README.md](README.md) and [docs/design.md](docs/design.md).
 
-## Status — 2026-09-26
+## Status — 2026-10-07
 
 - Milestones 0–2 merged (PRs #1–#4): repo and design, first binary and calculator tools, the Ollama
   client (`internal/llm`), `agent -check`/`-ask`, and `cmd/bench`.
@@ -27,15 +27,26 @@ learning record. Start with [README.md](README.md) and [docs/design.md](docs/des
 - Milestone 7 (SQLite): `internal/store` (runs, tool_calls, drafts; embedded migrations);
   `agent -runs`, `agent -run N` (re-checks provenance from stored calls). First external dependency:
   `modernc.org/sqlite`; CI builds with `CGO_ENABLED=0`.
+- Milestone 8 (the research loop): migrations through `pressly/goose`, with a `flock` so processes
+  take turns (goose has no SQLite lock); research and writing as separate phases, the writer with no
+  tools; call and token budgets; `429` retried with backoff in `internal/mcp`; checkpoints between
+  phases and `agent -resume N`. The writer measured against milestone 7's single loop:
+  `docs/benchmarks/2026-10-07-writer/`.
 
 ## Next, in order
 
-1. **Milestone 8 — the research loop**. First, replace the hand-written migrations in `internal/store`
-   with `pressly/goose` (design §3.7: the usual Go approach, after doing it by hand; down migrations,
-   cross-process locking), keeping `0001` and its tests. Lesson 08 compares the two. Then budgets for calls, wall-clock and tokens (design §3.2),
-   retries with backoff (a `429` from Quantic's anonymous rate limit, ADR 0006), and phases with
-   checkpoints in SQLite so an interrupted run resumes (design §3.6).
-2. Week Ahead data needs `get_stock` per company (amounts, yields).
+1. **Findings from milestone 8's measurements** ([benchmarks](docs/benchmarks/2026-10-07-writer/README.md)),
+   before more content depends on the writer:
+   - Numbers in words escape the validator: "ten stocks" where the data has nine, "four months".
+     That's design N1. `internal/provenance` reads only digits.
+   - "October 16 and 17": the bare day after "and" is read as the number 17, not a date.
+   - The writer isn't told today's date and sometimes guesses wrong ("October 2023"). Telling it
+     means today's date has to be a source the manifest accepts.
+   - Research sometimes gathers nothing (no call, or only a refused one), and the run still ends
+     `answered` with a "no data" reply.
+2. **Milestone 9 — the worker pool** (README roadmap): serialised GPU, parallel I/O. The Week Ahead
+   needs `get_stock` per company (amounts, yields), 20–40 calls paced under Quantic's 60/min limit.
+3. `num_ctx` is still Ollama's default 4096 for chat; fine for one calendar, not for the Week Ahead's data.
 
 ## Conventions
 

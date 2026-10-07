@@ -80,6 +80,16 @@ records tool calls regardless of *who* decided to make them, so the N1 guarantee
 loop intact. What a fixed pipeline actually buys is predictable cost, and that's what budgets are
 for. See [decision 0001](decisions/0001-agentic-research-constrained-writing.md).
 
+**As built (milestone 8, [`internal/agent`](../internal/agent/)).** `Researcher.Research` is the loop;
+when the model stops asking for tools, whatever it says is discarded. `Writer.Write` is one model
+call with no tools, given the question and each successful call's result, labelled with the call
+that produced it. Measured against milestone 7's single loop on the same questions and data, the
+split traced as many answers (6 of 9 each) and failed differently
+([benchmarks](benchmarks/2026-10-07-writer/README.md)): the writer doesn't know today's date, and it
+miscounts in words ("ten" stocks where there are nine), which the validator doesn't read. A variant
+that showed the writer the research conversation gave buy-timing advice twice; the data-only writer
+didn't.
+
 ### 3.2 Loop bounds
 
 The research loop is bounded, not open-ended. Per task kind, from config:
@@ -94,6 +104,15 @@ The research loop is bounded, not open-ended. Per task kind, from config:
 
 A breach is not a failure — it's a normal exit. The manifest is whatever was gathered, and the
 validator judges the result on its own merits.
+
+**As built (milestone 8).** Calls (default 4) and tokens (default 16,000) are `agent.Budget`; wall
+clock is `-timeout`, the run's context deadline. Tokens are Ollama's `prompt_eval_count` plus
+`eval_count` for every model call: the whole history is processed again each turn, so this is the
+work the GPU does, not the size of the conversation. A question about one calendar used 1,800–3,500
+tokens across both phases. A reply that takes research to its token budget has its tool requests
+dropped, not run. The writer is told when research stopped early. The run records which budget ran
+out (`runs.exhausted`). Not built yet: the cache for repeated identical calls, and per-task budgets
+from config.
 
 ### 3.3 Provenance
 
@@ -241,6 +260,15 @@ The interesting shape: **one GPU, many network calls.**
   agent exits with status 3 for it so a scheduler knows a retry is safe. `SIGTERM` (or Ctrl-C)
   cancels the request in flight and exits with 130; Ollama stops generating within about a second,
   so stopping the agent gives the GPU back straight away. The runbook has the commands ([target machine §8](target-machine.md#9-freeing-the-gpu)).
+- **As built (milestone 8).** A run is checkpointed in SQLite when research ends (`runs.phase`:
+  `research` → `write` → `done`), and every tool call is already recorded as it completes.
+  `agent -resume N` continues a run that was interrupted or failed before answering: one stopped while
+  writing calls no tool again; one stopped during research replays its recorded calls to the model
+  as the conversation so far, and carries on within what's left of its budget. Claiming a run to
+  resume is one conditional `UPDATE`, so two resumes of the same run can't both get it. Quantic's
+  `429` is retried in `internal/mcp` with exponential backoff and jitter, long enough to outlast its
+  one-minute window, then reported as `mcp.ErrRateLimited` (exit 3, resumable). There is no
+  scheduler yet: resuming is a command, not automatic.
 
 ### 3.7 Storage
 
@@ -281,6 +309,14 @@ ones), and doing it by hand first, then with the library, shows both approaches.
 hand-written version lacks: down migrations to undo a migration that turned out wrong, locking across
 processes, and a CLI. It reads SQL migrations from an `embed.FS`, so `0001` carries over, gaining the
 `-- +goose Up` / `-- +goose Down` markers.
+
+**As built (milestone 8).** "Locking across processes" was wrong for SQLite: goose ships lockers for Postgres and MySQL only, whose servers offer a lock to take. Measured
+with real processes, goose without a lock collided more often than the hand-written code (11–13 of
+40 opens of a new database failed, against 6–7). `internal/store` takes an exclusive `flock` on
+`agent.db.lock` around migrating, which made it 0 of 200, and also covers the one-time handover of a
+milestone 7 database: its versions move from `schema_migrations` into goose's `goose_db_version`, in
+one transaction. A test takes every migration down and back up. `0002` adds `phase`, `tokens` and
+`exhausted` to `runs`.
 
 ### 3.8 Delivery
 

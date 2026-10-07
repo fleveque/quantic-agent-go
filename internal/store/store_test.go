@@ -59,7 +59,7 @@ func TestARunRoundTrips(t *testing.T) {
 	draft := &store.Draft{Content: "MSFT on Oct 8, in the next 4 months.", Findings: []provenance.Finding{
 		{Text: "4", Offset: 29, Kind: provenance.KindNumber, Value: "4"},
 	}}
-	if err := s.Finish(ctx, id, store.StateUnverified, nil, draft); err != nil {
+	if err := s.Finish(ctx, id, store.Outcome{State: store.StateUnverified, Draft: draft, Tokens: 2100}); err != nil {
 		t.Fatal(err)
 	}
 
@@ -67,7 +67,8 @@ func TestARunRoundTrips(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got.State != store.StateUnverified || got.Input != "What goes ex-dividend in the next 10 days?" || got.FinishedAt.IsZero() {
+	if got.State != store.StateUnverified || got.Phase != store.PhaseDone || got.Tokens != 2100 ||
+		got.Input != "What goes ex-dividend in the next 10 days?" || got.FinishedAt.IsZero() {
 		t.Errorf("run = %+v", got)
 	}
 	// The audit log comes back in the order it was written, exactly.
@@ -90,7 +91,7 @@ func TestAStoredDraftCanBeRechecked(t *testing.T) {
 	ctx := t.Context()
 	id, _ := s.StartRun(ctx, "research", "q", "m")
 	s.RecordCall(ctx, id, 0, calendar)
-	s.Finish(ctx, id, store.StateAnswered, nil, &store.Draft{Content: "MSFT goes ex-dividend on Oct 8."})
+	s.Finish(ctx, id, store.Outcome{State: store.StateAnswered, Draft: &store.Draft{Content: "MSFT goes ex-dividend on Oct 8."}})
 
 	run, _ := s.Run(ctx, id)
 	m, err := provenance.NewManifest(run.Records()...)
@@ -150,7 +151,7 @@ func TestFinishIsAllOrNothing(t *testing.T) {
 
 	// A state the schema's CHECK constraint refuses: the draft insert
 	// succeeds, then the run update fails.
-	err := s.Finish(ctx, id, store.State("bogus"), nil, &store.Draft{Content: "an answer"})
+	err := s.Finish(ctx, id, store.Outcome{State: store.State("bogus"), Draft: &store.Draft{Content: "an answer"}})
 	if err == nil || !strings.Contains(err.Error(), "CHECK") {
 		t.Fatalf("err = %v, want the CHECK constraint to refuse the state", err)
 	}
@@ -167,11 +168,11 @@ func TestFinishIsAllOrNothing(t *testing.T) {
 func TestARunFinishesOnce(t *testing.T) {
 	s, _ := open(t)
 	id, _ := s.StartRun(t.Context(), "research", "q", "m")
-	if err := s.Finish(t.Context(), id, store.StateFailed, errors.New("model server unavailable"), nil); err != nil {
+	if err := s.Finish(t.Context(), id, store.Outcome{State: store.StateFailed, Err: errors.New("model server unavailable")}); err != nil {
 		t.Fatal(err)
 	}
 
-	err := s.Finish(t.Context(), id, store.StateAnswered, nil, nil)
+	err := s.Finish(t.Context(), id, store.Outcome{State: store.StateAnswered})
 
 	if !errors.Is(err, store.ErrNotFound) {
 		t.Errorf("err = %v, want ErrNotFound for a run that already finished", err)

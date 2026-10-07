@@ -1,13 +1,12 @@
-// Package agent runs the research loop: the model is offered tools, asks for
-// the ones it needs, and answers from what they return.
-//
-// This is milestone 5's version: one question, a cap on tool calls, and a
-// record of every call. Milestone 8 grows it into the full loop of design
-// §3.1 (budgets for time and tokens, retries, phases), and the writing phase
-// that follows it never gets tools at all.
+// Package agent answers a question in two phases (design §3.1). Research is
+// a loop: the model is offered tools, asks for the ones it needs, and sees
+// what they return, within a budget. Writing is one model call with no tools
+// at all: it gets the question and the data research gathered, and nothing
+// else, so it can't fetch, and it can't wander.
 package agent
 
 import (
+	"cmp"
 	"context"
 	"encoding/json"
 	"errors"
@@ -41,17 +40,32 @@ var (
 	_ ToolServer = (*mcp.Client)(nil)
 )
 
-// DefaultMaxCalls caps the tool calls one question may make. A question about
-// one calendar needs one; the cap is what stops a model that keeps asking.
-const DefaultMaxCalls = 4
+// Budget bounds the research phase (design §3.2). Running out is not a
+// failure: research stops, and writing goes ahead with what was gathered.
+// The third bound, wall-clock time, is the context's deadline.
+type Budget struct {
+	Calls  int // tool calls; 0 means DefaultBudget.Calls
+	Tokens int // tokens the model processes and generates; 0 means DefaultBudget.Tokens
+}
 
-// ErrTooManyCalls means the model was still asking for tools when the cap was
-// reached. Design §3.2 treats running out of budget as an outcome of the run,
-// not a crash: the calls made so far are still returned.
-var ErrTooManyCalls = errors.New("agent: tool call limit reached before an answer")
+// DefaultBudget is a budget for one question. A question about one calendar
+// needs one call and about 2,000 tokens (measured, docs/benchmarks); this
+// leaves room for a model that corrects itself a few times, and stops one
+// that keeps asking.
+var DefaultBudget = Budget{Calls: 4, Tokens: 16_000}
 
-// systemPrompt is the standing instruction for a research question. Prompts
+// Limit names the budget that stopped research early.
+type Limit string
+
+const (
+	LimitCalls  Limit = "calls"
+	LimitTokens Limit = "tokens"
+)
+
+// systemPrompt is the standing instruction for the research phase. Prompts
 // are code (design open question 6): they live here, reviewed like the rest.
+// The tool-call evaluation (cmd/evaltools) measures models against this
+// exact text, so changing it means measuring again.
 const systemPrompt = "You answer questions about dividends and the companies that pay them. " +
 	"Use the tools for every fact, date and figure; never rely on memory for them. " +
 	"If the tools don't provide something, say so instead of guessing. " +
@@ -68,19 +82,20 @@ type Call struct {
 	Duration  time.Duration
 }
 
-// Answer is the outcome of one question.
-type Answer struct {
-	Text      string
+// Research is what the research phase gathered: the calls it made, in
+// order, the tokens it used, and the budget that stopped it, if one did.
+type Research struct {
 	Calls     []Call
-	Truncated bool // the model ran out of tokens mid-answer
+	Tokens    int
+	Exhausted Limit // "" when the model finished on its own
 }
 
-// Researcher answers questions with a model and a tool server.
+// Researcher runs the research phase with a model and a tool server.
 type Researcher struct {
-	Model    Model
-	Server   ToolServer
-	Tools    []tools.Tool // the allowlist: the only tools offered, and the only ones run
-	MaxCalls int          // 0 means DefaultMaxCalls
+	Model  Model
+	Server ToolServer
+	Tools  []tools.Tool // the allowlist: the only tools offered, and the only ones run
+	Budget Budget
 
 	// Record, if set, is called after every tool call, successful or not,
 	// with its position in the run. It is how calls reach the audit log
@@ -89,54 +104,92 @@ type Researcher struct {
 	Record func(ctx context.Context, seq int, c Call) error
 }
 
-// Ask runs the loop for one question. A model mistake (an unknown tool,
-// arguments that don't fit, a tool's refusal) is shown to the model as the
-// tool's result so it can correct itself, and counts against the cap. A
-// failure the model can't fix, such as the tool server being down or the
-// context ending, stops the loop and is returned with the calls made so far.
-func (r *Researcher) Ask(ctx context.Context, question string) (Answer, error) {
+// Research runs the loop for one question until the model stops asking for
+// tools or a budget runs out. A model mistake (an unknown tool, arguments
+// that don't fit, a tool's refusal) is shown to the model as the tool's
+// result so it can correct itself, and counts against the budget. A failure
+// the model can't fix, such as the tool server being down or the context
+// ending, stops the loop and is returned with what was gathered so far.
+//
+// prior is research already done for this question, as recorded by an
+// earlier, interrupted run; its zero value starts afresh. Its calls are
+// replayed to the model as if just made, without calling the tools again, and
+// count against the budget like new ones.
+//
+// When the model stops asking, whatever it says is discarded: the answer is
+// the writing phase's job.
+func (r *Researcher) Research(ctx context.Context, question string, prior Research) (Research, error) {
 	req, err := r.FirstRequest(question)
 	if err != nil {
-		return Answer{}, err
+		return prior, err
 	}
-	limit := r.MaxCalls
-	if limit == 0 {
-		limit = DefaultMaxCalls
+	budget := Budget{
+		Calls:  cmp.Or(r.Budget.Calls, DefaultBudget.Calls),
+		Tokens: cmp.Or(r.Budget.Tokens, DefaultBudget.Tokens),
 	}
-	history := req.Messages
-	var answer Answer
+	history := append(req.Messages, replay(prior.Calls)...)
+	research := prior
+	research.Calls = slices.Clone(prior.Calls) // appending must not write into the caller's slice
 
 	for {
+		// Checked before asking (a resumed run may have spent its tokens
+		// already) and again after: a reply that crosses the budget has its
+		// requests dropped rather than run.
+		if research.Tokens >= budget.Tokens {
+			research.Exhausted = LimitTokens
+			return research, nil
+		}
 		resp, err := r.Model.Chat(ctx, llm.ChatRequest{Messages: history, Tools: req.Tools, Think: req.Think})
 		if err != nil {
-			return answer, err
+			return research, err
 		}
+		research.Tokens += resp.PromptEvalCount + resp.EvalCount
 		if len(resp.Message.ToolCalls) == 0 {
-			answer.Text = resp.Message.Content
-			answer.Truncated = resp.Truncated()
-			return answer, nil
+			return research, nil
+		}
+		if research.Tokens >= budget.Tokens {
+			research.Exhausted = LimitTokens
+			return research, nil
 		}
 
 		// The model's request goes into the history unchanged, followed by
 		// one tool message per call it made.
 		history = append(history, resp.Message)
 		for _, tc := range resp.Message.ToolCalls {
-			if len(answer.Calls) == limit {
-				return answer, ErrTooManyCalls
+			if len(research.Calls) == budget.Calls {
+				research.Exhausted = LimitCalls
+				return research, nil
 			}
 			call, err := r.run(ctx, tc)
-			answer.Calls = append(answer.Calls, call)
+			research.Calls = append(research.Calls, call)
 			if r.Record != nil {
-				if recErr := r.Record(ctx, len(answer.Calls)-1, call); recErr != nil {
-					return answer, fmt.Errorf("agent: recording call: %w", recErr)
+				if recErr := r.Record(ctx, len(research.Calls)-1, call); recErr != nil {
+					return research, fmt.Errorf("agent: recording call: %w", recErr)
 				}
 			}
 			if err != nil {
-				return answer, err
+				return research, err
 			}
 			history = append(history, llm.Message{Role: "tool", ToolName: call.Tool, Content: call.Result})
 		}
 	}
+}
+
+// replay turns recorded calls back into the conversation that produced them:
+// for each, the model's request and the tool's result. A model that asked for
+// two tools in one message gets them back as two messages, one call each,
+// which says the same thing.
+func replay(calls []Call) []llm.Message {
+	var history []llm.Message
+	for _, c := range calls {
+		history = append(history,
+			llm.Message{Role: "assistant", ToolCalls: []llm.ToolCall{
+				{Function: llm.FunctionCall{Name: c.Tool, Arguments: c.Arguments}},
+			}},
+			llm.Message{Role: "tool", ToolName: c.Tool, Content: c.Result},
+		)
+	}
+	return history
 }
 
 // FirstRequest is the request that opens the loop for a question: the

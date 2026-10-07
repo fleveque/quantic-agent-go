@@ -16,9 +16,11 @@ import (
 )
 
 // scriptedModel replies with its script, one message per Chat call, and
-// keeps every request so a test can check what the model was shown.
+// keeps every request so a test can check what the model was shown. Each
+// reply reports tokens tokens used (prompt and generated together).
 type scriptedModel struct {
 	script []llm.Message
+	tokens int
 	seen   []llm.ChatRequest
 }
 
@@ -27,7 +29,7 @@ func (m *scriptedModel) Chat(ctx context.Context, req llm.ChatRequest) (llm.Chat
 	if len(m.seen) > len(m.script) {
 		return llm.ChatResponse{}, fmt.Errorf("model called %d times, script has %d replies", len(m.seen), len(m.script))
 	}
-	return llm.ChatResponse{Message: m.script[len(m.seen)-1], DoneReason: "stop"}, nil
+	return llm.ChatResponse{Message: m.script[len(m.seen)-1], DoneReason: "stop", PromptEvalCount: m.tokens}, nil
 }
 
 // fakeServer answers tool calls by name and records the arguments it got.
@@ -59,17 +61,17 @@ func newResearcher(m agent.Model, s agent.ToolServer) *agent.Researcher {
 	return &agent.Researcher{Model: m, Server: s, Tools: []tools.Tool{tools.DividendCalendar}}
 }
 
-func TestAskCallsAToolThenAnswers(t *testing.T) {
-	model := &scriptedModel{script: []llm.Message{asks("dividend_calendar", `{"days":10}`), says("MSFT goes ex-dividend on 8 October.")}}
+func TestResearchCallsAToolUntilTheModelIsDone(t *testing.T) {
+	model := &scriptedModel{script: []llm.Message{asks("dividend_calendar", `{"days":10}`), says("MSFT goes ex-dividend on 8 October.")}, tokens: 700}
 	server := &fakeServer{results: map[string]mcp.Result{"dividend_calendar": {Text: calendar}}}
 
-	answer, err := newResearcher(model, server).Ask(t.Context(), "What goes ex-dividend in the next 10 days?")
+	answer, err := newResearcher(model, server).Research(t.Context(), "What goes ex-dividend in the next 10 days?", agent.Research{})
 
 	if err != nil {
-		t.Fatalf("Ask: %v", err)
+		t.Fatalf("Research: %v", err)
 	}
-	if answer.Text != "MSFT goes ex-dividend on 8 October." {
-		t.Errorf("answer = %q", answer.Text)
+	if answer.Exhausted != "" || answer.Tokens != 1400 {
+		t.Errorf("exhausted %q after %d tokens, want no budget run out and 2 × 700 tokens", answer.Exhausted, answer.Tokens)
 	}
 	// The arguments reached the server as the tool's own struct, decoded.
 	if len(server.got) != 1 || server.got[0] != (tools.DividendCalendarArgs{Days: 10}) {
@@ -96,7 +98,7 @@ func TestAskCallsAToolThenAnswers(t *testing.T) {
 
 // A model mistake is shown to the model as the tool's result, so it can
 // correct itself, and the server is never called with a bad request.
-func TestAskShowsModelMistakesToTheModel(t *testing.T) {
+func TestResearchShowsModelMistakesToTheModel(t *testing.T) {
 	tests := []struct {
 		name, tool, args, want string
 	}{
@@ -109,10 +111,10 @@ func TestAskShowsModelMistakesToTheModel(t *testing.T) {
 			model := &scriptedModel{script: []llm.Message{asks(tt.tool, tt.args), says("Sorry.")}}
 			server := &fakeServer{}
 
-			answer, err := newResearcher(model, server).Ask(t.Context(), "q")
+			answer, err := newResearcher(model, server).Research(t.Context(), "q", agent.Research{})
 
 			if err != nil {
-				t.Fatalf("Ask: %v", err)
+				t.Fatalf("Research: %v", err)
 			}
 			if len(server.got) != 0 {
 				t.Errorf("server was called with %v, want no call for a bad request", server.got)
@@ -129,46 +131,63 @@ func TestAskShowsModelMistakesToTheModel(t *testing.T) {
 	}
 }
 
-func TestAskShowsToolRefusalsToTheModel(t *testing.T) {
+func TestResearchShowsToolRefusalsToTheModel(t *testing.T) {
 	model := &scriptedModel{script: []llm.Message{asks("dividend_calendar", `{}`), says("The calendar isn't available.")}}
 	server := &fakeServer{results: map[string]mcp.Result{"dividend_calendar": {Text: "needs authentication", IsError: true}}}
 
-	answer, err := newResearcher(model, server).Ask(t.Context(), "q")
+	answer, err := newResearcher(model, server).Research(t.Context(), "q", agent.Research{})
 
 	if err != nil {
-		t.Fatalf("Ask: %v", err)
+		t.Fatalf("Research: %v", err)
 	}
 	if c := answer.Calls[0]; !c.Failed || c.Result != "error: needs authentication" {
 		t.Errorf("call = %+v, want the refusal recorded as a failed call", c)
 	}
 }
 
-func TestAskStopsAtTheCallLimit(t *testing.T) {
-	// A model that never stops asking.
-	model := &scriptedModel{}
-	for range 10 {
-		model.script = append(model.script, asks("dividend_calendar", `{"days":7}`))
+// A model that never stops asking, under each budget. Running out isn't an
+// error: research ends with what it gathered, saying which budget ran out.
+func TestResearchStopsWhenABudgetRunsOut(t *testing.T) {
+	tests := []struct {
+		name      string
+		budget    agent.Budget
+		calls     int
+		exhausted agent.Limit
+	}{
+		{"calls", agent.Budget{Calls: 3, Tokens: 1_000_000}, 3, agent.LimitCalls},
+		// 1000 tokens a reply: the third reply takes it to 3000, which
+		// reaches the budget, so its request is never run.
+		{"tokens", agent.Budget{Calls: 100, Tokens: 3000}, 2, agent.LimitTokens},
 	}
-	server := &fakeServer{results: map[string]mcp.Result{"dividend_calendar": {Text: calendar}}}
-	r := newResearcher(model, server)
-	r.MaxCalls = 3
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			model := &scriptedModel{tokens: 1000}
+			for range 10 {
+				model.script = append(model.script, asks("dividend_calendar", `{"days":7}`))
+			}
+			server := &fakeServer{results: map[string]mcp.Result{"dividend_calendar": {Text: calendar}}}
+			r := newResearcher(model, server)
+			r.Budget = tt.budget
 
-	answer, err := r.Ask(t.Context(), "q")
+			got, err := r.Research(t.Context(), "q", agent.Research{})
 
-	if !errors.Is(err, agent.ErrTooManyCalls) {
-		t.Fatalf("err = %v, want ErrTooManyCalls", err)
-	}
-	if len(answer.Calls) != 3 || len(server.got) != 3 {
-		t.Errorf("made %d calls (%d reached the server), want exactly 3", len(answer.Calls), len(server.got))
+			if err != nil {
+				t.Fatalf("err = %v, want running out to be a normal end", err)
+			}
+			if got.Exhausted != tt.exhausted || len(got.Calls) != tt.calls || len(server.got) != tt.calls {
+				t.Errorf("exhausted %q after %d calls (%d reached the server), want %q after %d",
+					got.Exhausted, len(got.Calls), len(server.got), tt.exhausted, tt.calls)
+			}
+		})
 	}
 }
 
 // A failure the model can't fix ends the run, keeping the error's identity.
-func TestAskStopsWhenTheServerIsGone(t *testing.T) {
+func TestResearchStopsWhenTheServerIsGone(t *testing.T) {
 	model := &scriptedModel{script: []llm.Message{asks("dividend_calendar", `{}`)}}
 	server := &fakeServer{err: fmt.Errorf("mcp: tools/call: %w", mcp.ErrUnavailable)}
 
-	answer, err := newResearcher(model, server).Ask(t.Context(), "q")
+	answer, err := newResearcher(model, server).Research(t.Context(), "q", agent.Research{})
 
 	if !errors.Is(err, mcp.ErrUnavailable) {
 		t.Fatalf("err = %v, want mcp.ErrUnavailable", err)
@@ -182,15 +201,15 @@ func TestAskStopsWhenTheServerIsGone(t *testing.T) {
 }
 
 // A protocol error from the server is the request's fault, so the model sees it.
-func TestAskShowsRPCErrorsToTheModel(t *testing.T) {
+func TestResearchShowsRPCErrorsToTheModel(t *testing.T) {
 	model := &scriptedModel{script: []llm.Message{asks("dividend_calendar", `{}`), says("ok")}}
 	rpcErr := &mcp.RPCError{Code: -32602, Message: "Invalid params"}
 	server := &fakeServer{err: rpcErr}
 
-	answer, err := newResearcher(model, server).Ask(t.Context(), "q")
+	answer, err := newResearcher(model, server).Research(t.Context(), "q", agent.Research{})
 
 	if err != nil {
-		t.Fatalf("Ask: %v", err)
+		t.Fatalf("Research: %v", err)
 	}
 	if c := answer.Calls[0]; !c.Failed || !strings.Contains(c.Result, "Invalid params") {
 		t.Errorf("call = %+v, want the protocol error shown to the model", c)
@@ -207,7 +226,7 @@ func TestEveryCallIsRecordedAsItHappens(t *testing.T) {
 		return nil
 	}
 
-	if _, err := r.Ask(t.Context(), "q"); err != nil {
+	if _, err := r.Research(t.Context(), "q", agent.Research{}); err != nil {
 		t.Fatal(err)
 	}
 	// The refused call is recorded too: the audit log shows what was tried.
@@ -223,12 +242,85 @@ func TestARunStopsIfACallCantBeRecorded(t *testing.T) {
 	diskFull := errors.New("disk full")
 	r.Record = func(context.Context, int, agent.Call) error { return diskFull }
 
-	_, err := r.Ask(t.Context(), "q")
+	_, err := r.Research(t.Context(), "q", agent.Research{})
 
 	if !errors.Is(err, diskFull) {
 		t.Errorf("err = %v, want the recording failure", err)
 	}
 	if len(model.seen) != 1 {
 		t.Errorf("model asked %d times, want the run stopped after the unrecorded call", len(model.seen))
+	}
+}
+
+// An interrupted run resumes: its recorded calls are replayed to the model,
+// not made again, and they count against the budget.
+func TestResearchResumesFromRecordedCalls(t *testing.T) {
+	// Spare capacity, as a slice built by append usually has: room for
+	// Research to write into, if it appended to this slice instead of a copy.
+	calls := make([]agent.Call, 2, 8)
+	calls[0] = agent.Call{Tool: "get_weather", Arguments: json.RawMessage(`{}`), Result: "error: no such tool", Failed: true}
+	calls[1] = agent.Call{Tool: "dividend_calendar", Arguments: json.RawMessage(`{"days":10}`), Result: calendar}
+	prior := agent.Research{Calls: calls, Tokens: 1500}
+	model := &scriptedModel{script: []llm.Message{asks("dividend_calendar", `{"days":30}`), says("done")}, tokens: 1000}
+	server := &fakeServer{results: map[string]mcp.Result{"dividend_calendar": {Text: calendar}}}
+	r := newResearcher(model, server)
+	r.Budget = agent.Budget{Calls: 3}
+	var seqs []int
+	r.Record = func(ctx context.Context, seq int, c agent.Call) error {
+		seqs = append(seqs, seq)
+		return nil
+	}
+
+	got, err := r.Research(t.Context(), "q", prior)
+
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Only the new call reached the server, and it was recorded after the
+	// old ones.
+	if len(server.got) != 1 || !slices.Equal(seqs, []int{2}) {
+		t.Errorf("server got %v, recorded seqs %v; want one new call, seq 2", server.got, seqs)
+	}
+	if len(got.Calls) != 3 || got.Tokens != 3500 {
+		t.Errorf("calls %d, tokens %d; want 3 calls and 1500 + 2 × 1000 tokens", len(got.Calls), got.Tokens)
+	}
+	// The model's first view: system, question, then the two recorded calls
+	// as request and result.
+	first := model.seen[0].Messages
+	if len(first) != 6 || first[3].Content != "error: no such tool" || first[4].ToolCalls[0].Function.Name != "dividend_calendar" || first[5].Content != calendar {
+		t.Errorf("replayed history = %+v", first)
+	}
+	// The caller's slice is left as it was, including the memory past its
+	// length that shares its backing array.
+	if spare := prior.Calls[:3][2]; spare.Tool != "" {
+		t.Errorf("Research wrote %s into the caller's backing array", spare.Tool)
+	}
+}
+
+// The resumed run's call budget is already spent: no new call is made.
+func TestResumingWithTheBudgetSpent(t *testing.T) {
+	prior := agent.Research{Calls: []agent.Call{{Tool: "dividend_calendar", Arguments: json.RawMessage(`{}`), Result: calendar}}}
+	model := &scriptedModel{script: []llm.Message{asks("dividend_calendar", `{"days":30}`)}}
+	server := &fakeServer{}
+	r := newResearcher(model, server)
+	r.Budget = agent.Budget{Calls: 1}
+
+	got, err := r.Research(t.Context(), "q", prior)
+
+	if err != nil || got.Exhausted != agent.LimitCalls || len(server.got) != 0 {
+		t.Errorf("got %+v, %v; want calls exhausted and nothing sent", got, err)
+	}
+}
+
+// A resumed run that had already spent its tokens doesn't ask the model again.
+func TestResumingWithTheTokensSpent(t *testing.T) {
+	model := &scriptedModel{}
+	r := newResearcher(model, &fakeServer{})
+	r.Budget = agent.Budget{Tokens: 3000}
+
+	got, err := r.Research(t.Context(), "q", agent.Research{Tokens: 3200})
+
+	if err != nil || got.Exhausted != agent.LimitTokens || len(model.seen) != 0 {
+		t.Errorf("got %+v, %v after %d model calls; want tokens exhausted and no call", got, err, len(model.seen))
 	}
 }
