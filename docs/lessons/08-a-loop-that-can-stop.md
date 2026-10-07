@@ -6,8 +6,8 @@ waits out Quantic's rate limit, and saves itself between the two steps, so a run
 carries on later instead of starting over. Along the way: a library that didn't do what its design
 said it did, and a measurement that didn't come out the way the design expected.
 
-*Also readable as a [formatted page](WALKTHROUGH_LESSON_URL). For the code itself, file by file, see the
-[walkthrough](WALKTHROUGH_URL).*
+*Also readable as a [formatted page](https://claude.ai/artifact/UnhJ2YEq4FN36mFYnxCXJh). For the code itself, file by file, see the
+[walkthrough](https://claude.ai/artifact/45CMTM8BqLHk7KQRo19JGh).*
 
 ---
 

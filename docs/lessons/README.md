@@ -17,6 +17,7 @@ where I found it non-obvious.
 | [05](05-the-first-real-tool.md) | The first real tool | 5 — `dividend_calendar` end to end | [The first real tool](https://claude.ai/artifact/9Fe5FJdzbCf2jTGMyTdLNd) | [The first tool, line by line](https://claude.ai/artifact/UJFF5Uiz7EwZJ75StoJwHE) |
 | [06](06-every-figure-has-a-source.md) | Every figure has a source | 6 — the provenance validator | [Every figure has a source](https://claude.ai/artifact/VneRrzy5zK36bKXuX48uzb) | [Provenance, line by line](https://claude.ai/artifact/PJ7YDwFzobrQMCoKEB5UJ7) |
 | [07](07-a-memory-that-can-be-audited.md) | A memory that can be audited | 7 — SQLite: runs, drafts, audit log | [A memory that can be audited](https://claude.ai/artifact/5KnF36mtBBgY3uXfiQ4q27) | [The run history, line by line](https://claude.ai/artifact/AAZi4mJ3GCd6zz6X6LYVM7) |
+| [08](08-a-loop-that-can-stop.md) | A loop that can stop | 8 — the research loop: budgets, retries, phases | [A loop that can stop](https://claude.ai/artifact/UnhJ2YEq4FN36mFYnxCXJh) | [The research loop, line by line](https://claude.ai/artifact/45CMTM8BqLHk7KQRo19JGh) |
 | [10](10-vector-search-without-a-vector-db.md) | Vector search without a vector database | 10 — retrieval | [Vector search without a vector database](https://claude.ai/code/artifact/4cf71989-6588-4864-b3bc-314781a156b1) | — |
 
 Lessons tell the story of a milestone: what surprised me and why. Walkthroughs go through the code
