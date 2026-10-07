@@ -314,16 +314,20 @@ func fakeMCP(t *testing.T, calendar string) *httptest.Server {
 }
 
 // fakeOllamaChat replays the real two-turn exchange captured in
-// internal/llm/testdata: first the tool request, then the answer.
+// internal/llm/testdata: first the tool request, then the answer, which is
+// also what the writing phase gets.
 func fakeOllamaChat(t *testing.T) *httptest.Server {
+	return fakeOllamaReplies(t, "chat-tool-call.json", "chat-tool-answer.json")
+}
+
+// fakeOllamaReplies answers each request with the next of files, from
+// internal/llm/testdata, and with the last one once they run out.
+func fakeOllamaReplies(t *testing.T, files ...string) *httptest.Server {
 	t.Helper()
 	var turn atomic.Int32
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		io.Copy(io.Discard, r.Body)
-		file := "chat-tool-call.json"
-		if turn.Add(1) > 1 {
-			file = "chat-tool-answer.json"
-		}
+		file := files[min(int(turn.Add(1)), len(files))-1]
 		b, err := os.ReadFile(filepath.Join("..", "..", "internal", "llm", "testdata", file))
 		if err != nil {
 			t.Errorf("fixture: %v", err)
@@ -471,5 +475,107 @@ func TestAnInterruptedRunIsRecorded(t *testing.T) {
 	run(t.Context(), []string{"-db", db, "-run", "1"}, &stdout, &stderr)
 	if got := stdout.String(); !strings.Contains(got, "run 1 · interrupted") || !strings.Contains(got, "context canceled") {
 		t.Errorf("-run 1 = %q, want the run saved as interrupted", got)
+	}
+}
+
+// fakeOllamaStuckWriting answers the research phase like fakeOllamaChat (a
+// tool request, then "done"), then never answers the writing request: a model
+// still working when Ctrl-C arrives. writing is closed when that request
+// comes in.
+func fakeOllamaStuckWriting(t *testing.T) (srv *httptest.Server, writing chan struct{}) {
+	t.Helper()
+	writing = make(chan struct{})
+	replay := fakeOllamaChat(t)
+	var turn atomic.Int32
+	srv = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if turn.Add(1) <= 2 {
+			resp, err := http.Post(replay.URL+r.URL.Path, "application/json", r.Body)
+			if err != nil {
+				t.Error(err)
+				return
+			}
+			defer resp.Body.Close()
+			io.Copy(w, resp.Body)
+			return
+		}
+		io.Copy(io.Discard, r.Body)
+		close(writing)
+		<-r.Context().Done()
+	}))
+	t.Cleanup(srv.Close)
+	return srv, writing
+}
+
+// Interrupted while writing, a run resumes in the write phase: it writes from
+// the calls it recorded and doesn't call a tool again. Here the MCP server
+// isn't even there for the resume.
+func TestARunInterruptedWhileWritingResumesWithoutCallingTools(t *testing.T) {
+	ollama, writing := fakeOllamaStuckWriting(t)
+	quantic := fakeMCP(t, realCalendar(t))
+	db := filepath.Join(t.TempDir(), "agent.db")
+	ctx, cancel := context.WithCancel(t.Context())
+	go func() { <-writing; cancel() }()
+
+	var stdout, stderr bytes.Buffer
+	code := run(ctx, []string{"-db", db, "-ollama", ollama.URL, "-mcp", quantic.URL,
+		"-research", "Which companies go ex-dividend in the next 10 days?"}, &stdout, &stderr)
+	if code != 130 {
+		t.Fatalf("first attempt exit %d, want 130: %s", code, stderr.String())
+	}
+	if !strings.Contains(stderr.String(), "agent -resume 1") {
+		t.Errorf("stderr = %q, want it to say how to resume", stderr.String())
+	}
+
+	stdout.Reset()
+	stderr.Reset()
+	// Only the writing is left: the model's one reply is the answer.
+	code = run(t.Context(), []string{"-db", db, "-ollama", fakeOllamaReplies(t, "chat-tool-answer.json").URL,
+		"-mcp", "http://127.0.0.1:1/mcp", "-resume", "1"}, &stdout, &stderr)
+
+	if code != 0 {
+		t.Fatalf("resume exit %d, want 0: %s", code, stderr.String())
+	}
+	got := stderr.String()
+	if !strings.Contains(got, "resuming run 1 in its write phase, with 1 tool call(s) recorded") || strings.Contains(got, "tool dividend_calendar") {
+		t.Errorf("stderr = %q, want a resume in the write phase with no tool calls", got)
+	}
+	if !strings.Contains(stdout.String(), "Microsoft") || !strings.Contains(got, "run 1 answered") {
+		t.Errorf("stdout = %q, stderr = %q; want the answer, and run 1 answered", stdout.String(), got)
+	}
+}
+
+// Failed in research because Quantic wasn't there: resuming does the research.
+func TestARunThatFailedInResearchResumes(t *testing.T) {
+	db := filepath.Join(t.TempDir(), "agent.db")
+	var stdout, stderr bytes.Buffer
+	code := run(t.Context(), []string{"-db", db, "-ollama", fakeOllamaChat(t).URL, "-mcp", "http://127.0.0.1:1/mcp",
+		"-research", "Which companies go ex-dividend in the next 10 days?"}, &stdout, &stderr)
+	if code != 3 {
+		t.Fatalf("first attempt exit %d, want 3: %s", code, stderr.String())
+	}
+
+	stderr.Reset()
+	code = run(t.Context(), []string{"-db", db, "-ollama", fakeOllamaChat(t).URL, "-mcp", fakeMCP(t, realCalendar(t)).URL,
+		"-resume", "1"}, &stdout, &stderr)
+
+	if code != 0 {
+		t.Fatalf("resume exit %d, want 0: %s", code, stderr.String())
+	}
+	if got := stderr.String(); !strings.Contains(got, "in its research phase") || !strings.Contains(got, "tool dividend_calendar") {
+		t.Errorf("stderr = %q, want research done on resume", got)
+	}
+}
+
+func TestAnAnsweredRunCantBeResumed(t *testing.T) {
+	db := filepath.Join(t.TempDir(), "agent.db")
+	var stdout, stderr bytes.Buffer
+	run(t.Context(), []string{"-db", db, "-ollama", fakeOllamaChat(t).URL, "-mcp", fakeMCP(t, realCalendar(t)).URL,
+		"-research", "Which companies go ex-dividend in the next 10 days?"}, &stdout, &stderr)
+
+	stderr.Reset()
+	code := run(t.Context(), []string{"-db", db, "-resume", "1"}, &stdout, &stderr)
+
+	if code != 1 || !strings.Contains(stderr.String(), "can't be resumed") {
+		t.Errorf("exit %d, stderr %q; want 1 and a reason", code, stderr.String())
 	}
 }

@@ -44,41 +44,112 @@ type researchConfig struct {
 	model    agent.Model
 	mcpURL   string
 	store    *store.Store
-	question string
+	question string // a new run's question
+	resume   int64  // or a run to resume
 	fail     func(error) int
 }
 
-// research answers one question with the tools, recording the run as it
-// goes: the run when it starts, each tool call as it completes, and the
-// outcome and draft when it ends.
+// research answers one question in two phases, research then write (design
+// §3.1), recording the run as it goes: the run when it starts, each tool call
+// as it completes, a checkpoint when research is done, and the outcome and
+// draft when it ends. A resumed run starts at the phase it had reached: one
+// interrupted while writing doesn't call a single tool again.
 func research(ctx context.Context, stdout, stderr io.Writer, cfg researchConfig) int {
-	modelName := ""
-	if named, ok := cfg.model.(interface{ Model() string }); ok {
-		modelName = named.Model()
-	}
-	runID, err := cfg.store.StartRun(ctx, "research", cfg.question, modelName)
+	run, err := startOrResume(ctx, stderr, cfg)
 	if err != nil {
 		return cfg.fail(err)
 	}
+	gathered := agent.Research{Calls: run.Calls, Tokens: run.Tokens, Exhausted: run.Exhausted}
 
 	// The outcome must be saved even when ctx has been cancelled (Ctrl-C):
 	// that is exactly when "interrupted" needs recording. WithoutCancel keeps
 	// ctx's values but drops its cancellation; the timeout bounds the save.
-	finish := func(state store.State, runErr error, draft *store.Draft) {
+	finish := func(o store.Outcome) {
 		saveCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
 		defer cancel()
-		if err := cfg.store.Finish(saveCtx, runID, state, runErr, draft); err != nil {
+		if err := cfg.store.Finish(saveCtx, run.ID, o); err != nil {
 			fmt.Fprintln(stderr, "agent: saving the run:", err)
 		}
-		fmt.Fprintf(stderr, "agent: run %d %s\n", runID, state)
+		fmt.Fprintf(stderr, "agent: run %d %s\n", run.ID, o.State)
+		if o.Draft == nil {
+			fmt.Fprintf(stderr, "agent: to carry on from where it stopped: agent -resume %d\n", run.ID)
+		}
+	}
+	stopped := func(err error, tokens int) int {
+		finish(store.Outcome{State: outcome(err), Err: err, Tokens: tokens})
+		return cfg.fail(err)
 	}
 
+	if run.Phase == store.PhaseResearch {
+		gathered, err = researchPhase(ctx, stderr, cfg, run.ID, run.Input, gathered)
+		if err != nil {
+			return stopped(err, gathered.Tokens)
+		}
+		if gathered.Exhausted != "" {
+			fmt.Fprintf(stderr, "agent: research stopped when its %s budget ran out; writing from what it gathered\n", gathered.Exhausted)
+		}
+		if err := cfg.store.Checkpoint(ctx, run.ID, store.PhaseWrite, gathered.Tokens, gathered.Exhausted); err != nil {
+			return stopped(err, gathered.Tokens)
+		}
+	}
+
+	w := &agent.Writer{Model: cfg.model}
+	draft, err := w.Write(ctx, run.Input, gathered)
+	tokens := gathered.Tokens + draft.Tokens
+	if err != nil {
+		return stopped(err, tokens)
+	}
+
+	fmt.Fprintln(stdout, draft.Text)
+	if draft.Truncated {
+		fmt.Fprintln(stderr, "agent: the answer was truncated: the model hit its token limit")
+	}
+	findings, err := check(draft.Text, gathered.Calls)
+	if err != nil {
+		return stopped(err, tokens)
+	}
+	saved := &store.Draft{Content: draft.Text, Truncated: draft.Truncated, Findings: findings}
+	if len(findings) > 0 {
+		reportFindings(stderr, findings)
+		finish(store.Outcome{State: store.StateUnverified, Draft: saved, Tokens: tokens})
+		return exitUnverified
+	}
+	finish(store.Outcome{State: store.StateAnswered, Draft: saved, Tokens: tokens})
+	return exitOK
+}
+
+// startOrResume records a new run, or claims the one being resumed.
+func startOrResume(ctx context.Context, stderr io.Writer, cfg researchConfig) (store.Run, error) {
+	if cfg.resume != 0 {
+		run, err := cfg.store.Resume(ctx, cfg.resume)
+		if err != nil {
+			return store.Run{}, err
+		}
+		fmt.Fprintf(stderr, "agent: resuming run %d in its %s phase, with %d tool call(s) recorded\n", run.ID, run.Phase, len(run.Calls))
+		return run, nil
+	}
+	modelName := ""
+	if named, ok := cfg.model.(interface{ Model() string }); ok {
+		modelName = named.Model()
+	}
+	id, err := cfg.store.StartRun(ctx, "research", cfg.question, modelName)
+	if err != nil {
+		return store.Run{}, err
+	}
+	return store.Run{ID: id, Input: cfg.question, Phase: store.PhaseResearch}, nil
+}
+
+// researchPhase lets the model call Quantic's tools, recording each call as
+// it completes, and continuing from prior when resuming.
+func researchPhase(ctx context.Context, stderr io.Writer, cfg researchConfig, runID int64, question string, prior agent.Research) (agent.Research, error) {
 	// The token, if any, comes only from the environment: a secret on the
 	// command line ends up in shell history and in ps.
 	server := mcp.New(cfg.mcpURL, os.Getenv("QUANTIC_MCP_TOKEN"))
+	server.OnRetry = func(method string, retry int, wait time.Duration) {
+		fmt.Fprintf(stderr, "agent: Quantic's rate limit; retry %d of %s in %s\n", retry, method, wait.Round(100*time.Millisecond))
+	}
 	if _, err := server.Initialize(ctx); err != nil {
-		finish(outcome(err), err, nil)
-		return cfg.fail(err)
+		return prior, err
 	}
 
 	r := &agent.Researcher{
@@ -89,32 +160,11 @@ func research(ctx context.Context, stdout, stderr io.Writer, cfg researchConfig)
 			return cfg.store.RecordCall(ctx, runID, seq, c)
 		},
 	}
-	answer, err := r.Ask(ctx, cfg.question)
-	for _, c := range answer.Calls {
+	gathered, err := r.Research(ctx, question, prior)
+	for _, c := range gathered.Calls[len(prior.Calls):] {
 		fmt.Fprintf(stderr, "tool %s %s → %s (%s)\n", c.Tool, c.Arguments, callSummary(c), c.Duration.Round(time.Millisecond))
 	}
-	if err != nil {
-		finish(outcome(err), err, nil)
-		return cfg.fail(err)
-	}
-
-	fmt.Fprintln(stdout, answer.Text)
-	if answer.Truncated {
-		fmt.Fprintln(stderr, "agent: the answer was truncated: the model hit its token limit")
-	}
-	findings, err := check(answer.Text, answer.Calls)
-	if err != nil {
-		finish(store.StateFailed, err, nil)
-		return cfg.fail(err)
-	}
-	draft := &store.Draft{Content: answer.Text, Truncated: answer.Truncated, Findings: findings}
-	if len(findings) > 0 {
-		reportFindings(stderr, findings)
-		finish(store.StateUnverified, nil, draft)
-		return exitUnverified
-	}
-	finish(store.StateAnswered, nil, draft)
-	return exitOK
+	return gathered, err
 }
 
 // outcome is the state a run ends in when err stopped it.
@@ -156,9 +206,10 @@ func showRuns(ctx context.Context, stdout, stderr io.Writer, db *store.Store) in
 		return exitFailed
 	}
 	tw := tabwriter.NewWriter(stdout, 0, 0, 2, ' ', 0)
-	fmt.Fprintln(tw, "RUN\tSTARTED\tSTATE\tCALLS\tQUESTION")
+	fmt.Fprintln(tw, "RUN\tSTARTED\tSTATE\tPHASE\tCALLS\tTOKENS\tQUESTION")
 	for _, r := range runs {
-		fmt.Fprintf(tw, "%d\t%s\t%s\t%d\t%s\n", r.ID, r.StartedAt.Local().Format("2006-01-02 15:04"), r.State, r.CallCount, shorten(r.Input, 60))
+		fmt.Fprintf(tw, "%d\t%s\t%s\t%s\t%d\t%d\t%s\n", r.ID, r.StartedAt.Local().Format("2006-01-02 15:04"),
+			r.State, r.Phase, r.CallCount, r.Tokens, shorten(r.Input, 60))
 	}
 	tw.Flush()
 	return exitOK
@@ -175,6 +226,10 @@ func showRun(ctx context.Context, stdout, stderr io.Writer, db *store.Store, id 
 	}
 	fmt.Fprintf(stdout, "run %d · %s · %s · %s\n", r.ID, r.State, r.Model, r.StartedAt.Local().Format("2006-01-02 15:04:05"))
 	fmt.Fprintf(stdout, "question: %s\n", r.Input)
+	fmt.Fprintf(stdout, "phase: %s · %d tokens\n", r.Phase, r.Tokens)
+	if r.Exhausted != "" {
+		fmt.Fprintf(stdout, "research stopped early: its %s budget ran out\n", r.Exhausted)
+	}
 	if r.Error != "" {
 		fmt.Fprintf(stdout, "error: %s\n", r.Error)
 	}

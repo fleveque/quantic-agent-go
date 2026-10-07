@@ -24,6 +24,20 @@ const (
 	StateInterrupted State = "interrupted" // stopped by Ctrl-C or SIGTERM
 )
 
+// Phase is how far a run has got (design §3.1). A run is saved at the end of
+// each phase, and resumes from the phase it was in.
+type Phase string
+
+const (
+	PhaseResearch Phase = "research" // calling tools
+	PhaseWrite    Phase = "write"    // research done; writing the answer
+	PhaseDone     Phase = "done"     // answered
+)
+
+// ErrNotResumable means the run can't be resumed: it doesn't exist, it
+// finished with an answer, or it is still running.
+var ErrNotResumable = errors.New("store: run can't be resumed")
+
 // Run is one run as stored, with its tool calls and draft when read with Run.
 type Run struct {
 	ID         int64
@@ -31,6 +45,9 @@ type Run struct {
 	Input      string
 	Model      string
 	State      State
+	Phase      Phase
+	Tokens     int
+	Exhausted  agent.Limit // the budget that cut research short, if one did
 	Error      string
 	StartedAt  time.Time
 	FinishedAt time.Time // zero while running
@@ -73,32 +90,60 @@ func (s *Store) RecordCall(ctx context.Context, runID int64, seq int, c agent.Ca
 	return nil
 }
 
-// Finish ends a run: its state, the error that stopped it if any, and its
-// draft if it produced one. All of it is written in one transaction, so a run
-// is never marked answered without its draft, or the reverse.
-func (s *Store) Finish(ctx context.Context, runID int64, state State, runErr error, draft *Draft) error {
+// Checkpoint records that a running run has finished a phase: from here on,
+// resuming it starts at next. tokens and exhausted are what research spent
+// and whether a budget stopped it.
+func (s *Store) Checkpoint(ctx context.Context, runID int64, next Phase, tokens int, exhausted agent.Limit) error {
+	res, err := s.db.ExecContext(ctx,
+		`UPDATE runs SET phase = ?, tokens = ?, exhausted = ? WHERE id = ? AND state = ?`,
+		next, tokens, nullable(string(exhausted)), runID, StateRunning)
+	if err != nil {
+		return fmt.Errorf("store: checkpointing run %d: %w", runID, err)
+	}
+	if n, _ := res.RowsAffected(); n != 1 {
+		return fmt.Errorf("store: run %d is not running: %w", runID, ErrNotFound)
+	}
+	return nil
+}
+
+// Outcome is how a run ended.
+type Outcome struct {
+	State  State
+	Err    error  // what stopped it, if something did
+	Draft  *Draft // what it produced, if anything
+	Tokens int    // model tokens used in all, both phases
+}
+
+// Finish ends a run: its state, the error that stopped it if any, its draft
+// if it produced one, and the tokens it used. All of it is written in one
+// transaction, so a run is never marked answered without its draft, or the
+// reverse. A run with a draft is done; one without stays in its phase, to
+// resume from.
+func (s *Store) Finish(ctx context.Context, runID int64, o Outcome) error {
 	return s.inTx(ctx, func(tx *sql.Tx) error {
-		if draft != nil {
-			findings, err := json.Marshal(draft.Findings)
+		if o.Draft != nil {
+			findings, err := json.Marshal(o.Draft.Findings)
 			if err != nil {
 				return err
 			}
 			if _, err := tx.ExecContext(ctx,
 				`INSERT INTO drafts (run_id, content, truncated, findings, created_at) VALUES (?, ?, ?, ?, ?)`,
-				runID, draft.Content, draft.Truncated, string(findings), s.stamp()); err != nil {
+				runID, o.Draft.Content, o.Draft.Truncated, string(findings), s.stamp()); err != nil {
 				return fmt.Errorf("store: saving draft of run %d: %w", runID, err)
 			}
 		}
 
 		var errText sql.NullString
-		if runErr != nil {
-			errText = sql.NullString{String: runErr.Error(), Valid: true}
+		if o.Err != nil {
+			errText = nullable(o.Err.Error())
 		}
 		// Only a running run can finish. Updating by id and state together
 		// makes "finish twice" an error instead of a quiet overwrite.
 		res, err := tx.ExecContext(ctx,
-			`UPDATE runs SET state = ?, error = ?, finished_at = ? WHERE id = ? AND state = ?`,
-			state, errText, s.stamp(), runID, StateRunning)
+			`UPDATE runs SET state = ?, error = ?, finished_at = ?, tokens = ?,
+			                 phase = CASE WHEN ? THEN ? ELSE phase END
+			 WHERE id = ? AND state = ?`,
+			o.State, errText, s.stamp(), o.Tokens, o.Draft != nil, PhaseDone, runID, StateRunning)
 		if err != nil {
 			return fmt.Errorf("store: finishing run %d: %w", runID, err)
 		}
@@ -108,6 +153,27 @@ func (s *Store) Finish(ctx context.Context, runID int64, state State, runErr err
 		return nil
 	})
 }
+
+// Resume claims a run that was interrupted or failed before answering, and
+// marks it running again, then returns it with its calls. The claim is one
+// UPDATE that only matches a resumable run, so if two processes try to
+// resume the same run at once, exactly one gets it.
+func (s *Store) Resume(ctx context.Context, runID int64) (Run, error) {
+	res, err := s.db.ExecContext(ctx,
+		`UPDATE runs SET state = ?, error = NULL, finished_at = NULL
+		 WHERE id = ? AND state IN (?, ?) AND phase != ?`,
+		StateRunning, runID, StateInterrupted, StateFailed, PhaseDone)
+	if err != nil {
+		return Run{}, fmt.Errorf("store: resuming run %d: %w", runID, err)
+	}
+	if n, _ := res.RowsAffected(); n != 1 {
+		return Run{}, fmt.Errorf("store: run %d: %w (only an interrupted or failed run without an answer can be)", runID, ErrNotResumable)
+	}
+	return s.Run(ctx, runID)
+}
+
+// nullable is s as a nullable column: NULL when empty.
+func nullable(s string) sql.NullString { return sql.NullString{String: s, Valid: s != ""} }
 
 // Run reads one run with its calls and draft.
 func (s *Store) Run(ctx context.Context, id int64) (Run, error) {
@@ -169,8 +235,8 @@ func (s *Store) Runs(ctx context.Context, limit int) ([]Run, error) {
 // query reads runs with a call count; tail is the WHERE/ORDER BY part.
 func (s *Store) query(ctx context.Context, tail string, args ...any) ([]Run, error) {
 	rows, err := s.db.QueryContext(ctx,
-		`SELECT r.id, r.kind, r.input, r.model, r.state, r.error, r.started_at, r.finished_at,
-		        (SELECT COUNT(*) FROM tool_calls c WHERE c.run_id = r.id)
+		`SELECT r.id, r.kind, r.input, r.model, r.state, r.phase, r.tokens, r.exhausted, r.error,
+		        r.started_at, r.finished_at, (SELECT COUNT(*) FROM tool_calls c WHERE c.run_id = r.id)
 		 FROM runs r `+tail, args...)
 	if err != nil {
 		return nil, fmt.Errorf("store: reading runs: %w", err)
@@ -180,11 +246,13 @@ func (s *Store) query(ctx context.Context, tail string, args ...any) ([]Run, err
 	var out []Run
 	for rows.Next() {
 		var r Run
-		var errText, finished sql.NullString // columns that can be NULL
+		var exhausted, errText, finished sql.NullString // columns that can be NULL
 		var started string
-		if err := rows.Scan(&r.ID, &r.Kind, &r.Input, &r.Model, &r.State, &errText, &started, &finished, &r.CallCount); err != nil {
+		if err := rows.Scan(&r.ID, &r.Kind, &r.Input, &r.Model, &r.State, &r.Phase, &r.Tokens, &exhausted, &errText,
+			&started, &finished, &r.CallCount); err != nil {
 			return nil, fmt.Errorf("store: reading a run: %w", err)
 		}
+		r.Exhausted = agent.Limit(exhausted.String)
 		r.Error = errText.String
 		r.StartedAt, _ = time.Parse(time.RFC3339Nano, started)
 		if finished.Valid {

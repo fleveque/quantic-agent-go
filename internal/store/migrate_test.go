@@ -113,3 +113,36 @@ func TestADatabaseFromBeforeGooseIsAdopted(t *testing.T) {
 		t.Errorf("goose versions = %q, want 0,1", applied)
 	}
 }
+
+// 0002 adds phases to runs that already exist: one that answered is done; one
+// that failed stays in research, so it can be resumed.
+func TestPhasesAreAddedToExistingRuns(t *testing.T) {
+	s := openForTest(t, filepath.Join(t.TempDir(), "agent.db"))
+	ctx := t.Context()
+	dir, _ := fs.Sub(migrations, "migrations")
+	p, err := goose.NewProvider(goose.DialectSQLite3, s.db, dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := p.DownTo(ctx, 1); err != nil {
+		t.Fatal(err)
+	}
+	for _, state := range []string{"answered", "failed"} {
+		if _, err := s.db.ExecContext(ctx,
+			`INSERT INTO runs (kind, input, model, state, started_at) VALUES ('research', 'q', 'm', ?, '2026-10-06T16:09:00Z')`, state); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	if _, err := p.Up(ctx); err != nil {
+		t.Fatal(err)
+	}
+
+	runs, err := s.Runs(ctx, 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(runs) != 2 || runs[1].Phase != PhaseDone || runs[0].Phase != PhaseResearch {
+		t.Errorf("runs = %+v, want the answered run done and the failed one in research", runs)
+	}
+}
