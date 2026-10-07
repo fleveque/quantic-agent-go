@@ -1,4 +1,7 @@
-# quantic-agent — notes for Claude Code
+# quantic-agent-go — notes for Claude Code
+
+**This repository is deprecated and archived** ([decision 0007](docs/decisions/0007-continue-in-python.md)).
+The agent continues in Python at `github.com/fleveque/quantic-agent`. Nothing more is built here.
 
 A local Go agent that drafts data-grounded content for Quantic using a local model through Ollama.
 It doubles as the author's way of learning Go in public: the commit history and `docs/lessons` are the
@@ -35,11 +38,10 @@ learning record. Start with [README.md](README.md) and [docs/design.md](docs/des
   question and the run's date count as sources); the writer is told the date; research with no data
   ends `no_data` (exit 5) without writing.
 
-## Next, in order
+## Next
 
-1. **Milestone 9 — the worker pool** (README roadmap): serialised GPU, parallel I/O. The Week Ahead
-   needs `get_stock` per company (amounts, yields), 20–40 calls paced under Quantic's 60/min limit.
-2. `num_ctx` is still Ollama's default 4096 for chat; fine for one calendar, not for the Week Ahead's data.
+Nothing: the agent continues in Python ([decision 0007](docs/decisions/0007-continue-in-python.md)).
+Milestone 9 onwards happens there.
 
 ## Conventions
 
