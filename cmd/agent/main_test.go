@@ -460,10 +460,17 @@ func TestResearchIsRecordedAndCanBeRechecked(t *testing.T) {
 // saved, which is exactly the moment a cancelled context can't be used for it.
 func TestAnInterruptedRunIsRecorded(t *testing.T) {
 	quantic := fakeMCP(t, realCalendar(t))
-	ollama := slowServer(t)
 	db := filepath.Join(t.TempDir(), "agent.db")
 	ctx, cancel := context.WithCancel(t.Context())
-	time.AfterFunc(100*time.Millisecond, cancel)
+	// Ctrl-C while the model is working: cancel when its request arrives,
+	// not after a fixed delay. A delay raced the database setup on a slow CI
+	// machine and sometimes cancelled before the run had even started.
+	ollama := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		io.Copy(io.Discard, r.Body)
+		cancel()
+		<-r.Context().Done()
+	}))
+	t.Cleanup(ollama.Close)
 
 	var stdout, stderr bytes.Buffer
 	code := run(ctx, []string{"-db", db, "-ollama", ollama.URL, "-mcp", quantic.URL, "-research", "q"}, &stdout, &stderr)
